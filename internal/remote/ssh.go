@@ -14,7 +14,6 @@ import (
 // Config son los parámetros de conexión SSH a las máquinas virtuales.
 type Config struct {
 	SSHPath        string // ejecutable ssh
-	SCPPath        string // ejecutable scp
 	User           string // usuario remoto, por ejemplo "deploy"
 	KeyFile        string // llave privada sin passphrase
 	ConnectTimeout time.Duration
@@ -29,7 +28,7 @@ type Client struct {
 	run runFunc
 }
 
-// NewClient crea un Client que usa los ejecutables ssh y scp del sistema.
+// NewClient crea un Client que usa el ejecutable ssh del sistema.
 func NewClient(cfg Config) *Client {
 	return &Client{cfg: cfg, run: execCommand}
 }
@@ -44,12 +43,14 @@ func (c *Client) Run(ctx context.Context, host, script string) error {
 	return nil
 }
 
-// Upload copia el archivo local a remotePath en host.
-func (c *Client) Upload(ctx context.Context, host, localPath, remotePath string) error {
-	args := append(c.commonArgs(), localPath, c.target(host)+":"+remotePath)
-	out, err := c.run(ctx, c.cfg.SCPPath, nil, args...)
+// Upload escribe el contenido de r en remotePath dentro de host.
+// Se envía por stdin de ssh con cat en vez de usar scp, porque el scp de Git Bash
+// interpreta las rutas locales de Windows (C:\...) como si C fuera un host remoto.
+func (c *Client) Upload(ctx context.Context, host string, r io.Reader, remotePath string) error {
+	args := append(c.commonArgs(), c.target(host), "cat > "+shellQuote(remotePath))
+	out, err := c.run(ctx, c.cfg.SSHPath, r, args...)
 	if err != nil {
-		return fmt.Errorf("scp a %s: %w: %s", host, err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("copiar a %s:%s: %w: %s", host, remotePath, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
@@ -83,6 +84,11 @@ func (c *Client) commonArgs() []string {
 
 func (c *Client) target(host string) string {
 	return c.cfg.User + "@" + host
+}
+
+// shellQuote encierra s en comillas simples para usarlo como un solo argumento en la shell remota.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func execCommand(ctx context.Context, name string, stdin io.Reader, args ...string) ([]byte, error) {

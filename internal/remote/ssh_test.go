@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -36,7 +37,6 @@ func newTestClient(f *fakeRunner) *Client {
 	return &Client{
 		cfg: Config{
 			SSHPath:        "ssh",
-			SCPPath:        "scp",
 			User:           "deploy",
 			KeyFile:        "llave",
 			ConnectTimeout: 5 * time.Second,
@@ -64,22 +64,25 @@ func TestRunSendsScriptThroughStdin(t *testing.T) {
 	}
 }
 
-func TestUploadUsesSCPWithRemoteTarget(t *testing.T) {
+func TestUploadStreamsContentThroughSSH(t *testing.T) {
 	f := &fakeRunner{}
 	c := newTestClient(f)
 
-	if err := c.Upload(context.Background(), "192.168.10.30", "sitio.zip", "/tmp/sitio.zip"); err != nil {
+	err := c.Upload(context.Background(), "192.168.10.30", strings.NewReader("contenido zip"), "/tmp/sitio.zip")
+	if err != nil {
 		t.Fatalf("Upload() error: %v", err)
 	}
 
-	if f.name != "scp" {
-		t.Errorf("programa = %q, se esperaba scp", f.name)
+	if f.name != "ssh" {
+		t.Errorf("programa = %q, se esperaba ssh", f.name)
 	}
-	if !slices.Contains(f.args, "deploy@192.168.10.30:/tmp/sitio.zip") {
-		t.Errorf("falta el destino remoto en %v", f.args)
+	if !slices.Contains(f.args, "cat > '/tmp/sitio.zip'") {
+		t.Errorf("falta el comando remoto en %v", f.args)
+	}
+	if f.stdin != "contenido zip" {
+		t.Errorf("stdin = %q, se esperaba el contenido del archivo", f.stdin)
 	}
 }
-
 func TestWaitForSSHRetriesUntilSuccess(t *testing.T) {
 	f := &fakeRunner{failTimes: 2}
 	c := newTestClient(f)

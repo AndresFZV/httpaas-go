@@ -176,3 +176,14 @@ button:hover {
         overflow-x: auto;
     }
 }
+
+.alert-info {
+    background: #e8f0fe;
+    border: 1px solid #1f5fbf;
+    color: #174ea6;
+}
+
+button:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}

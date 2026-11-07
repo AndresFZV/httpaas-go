@@ -36,14 +36,26 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", fileServer))
 
 	mux.HandleFunc("GET /{$}", h.index)
+	mux.HandleFunc("POST /instances", h.createInstance)
+	mux.HandleFunc("POST /instances/deploy", h.deployInstance)
 }
 
+// indexData son los datos que recibe la plantilla index.html.
 type indexData struct {
-	Title string
+	Title    string
+	Hostname string
+	Error    string
+	Success  string
 }
 
 func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
-	h.render(w, http.StatusOK, "index.html", indexData{Title: pageTitle})
+	h.renderIndex(w, http.StatusOK, indexData{})
+}
+
+// renderIndex completa los datos comunes de la página principal y la renderiza.
+func (h *Handler) renderIndex(w http.ResponseWriter, status int, data indexData) {
+	data.Title = pageTitle
+	h.render(w, status, "index.html", data)
 }
 
 // render ejecuta la plantilla name en un buffer y solo escribe la respuesta si no hubo errores.

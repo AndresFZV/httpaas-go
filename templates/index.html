@@ -10,12 +10,21 @@
     <main class="panel">
         <h1>{{.Title}}</h1>
 
+        {{if .Error}}
+            <p class="alert alert-error" role="alert">{{.Error}}</p>
+        {{end}}
+        {{if .Success}}
+            <p class="alert alert-success" role="status">{{.Success}}</p>
+        {{end}}
+
         <form class="request-form" method="post" enctype="multipart/form-data">
             <div class="field">
                 <label for="hostname">Nombre del host</label>
                 <div class="field-row">
-                    <input type="text" id="hostname" name="hostname"
-                           placeholder="paisajes" autocomplete="off" required>
+                    <input type="text" id="hostname" name="hostname" value="{{.Hostname}}"
+                           placeholder="paisajes" autocomplete="off" required
+                           maxlength="63" pattern="[a-zA-Z]([a-zA-Z0-9\-]*[a-zA-Z0-9])?"
+                           title="Letras, números y guiones; empieza por letra y no termina en guion">
                     <button type="submit" formaction="/instances">Aceptar</button>
                 </div>
             </div>
@@ -26,6 +35,7 @@
                     <input type="file" id="content" name="content" accept=".zip">
                     <button type="submit" formaction="/instances/deploy">Publicar</button>
                 </div>
+                <p class="hint">Archivo .zip de máximo 50 MB con un index.html en la raíz.</p>
             </div>
         </form>
 

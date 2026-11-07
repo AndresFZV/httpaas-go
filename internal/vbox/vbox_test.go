@@ -8,16 +8,21 @@ import (
 	"time"
 )
 
-// fakeRunner registra los subcomandos ejecutados y falla en el subcomando failOn.
+// fakeRunner registra los subcomandos ejecutados y falla en el subcomando failOn con la salida failOutput.
 type fakeRunner struct {
-	calls  []string
-	failOn string
+	calls      []string
+	failOn     string
+	failOutput string
 }
 
 func (f *fakeRunner) run(_ context.Context, args ...string) ([]byte, error) {
 	f.calls = append(f.calls, args[0])
 	if args[0] == f.failOn {
-		return []byte("error simulado"), errors.New("exit status 1")
+		output := f.failOutput
+		if output == "" {
+			output = "error simulado"
+		}
+		return []byte(output), errors.New("exit status 1")
 	}
 	return nil, nil
 }
@@ -92,5 +97,21 @@ func TestDeleteVMRetriesUnregister(t *testing.T) {
 	}
 	if unregisters != unregisterRetries {
 		t.Errorf("intentos de unregistervm = %d, se esperaban %d", unregisters, unregisterRetries)
+	}
+}
+
+func TestDeleteVMIgnoresMissingVM(t *testing.T) {
+	f := &fakeRunner{
+		failOn:     "unregistervm",
+		failOutput: "error: Could not find a registered machine named 'paisajes' (VBOX_E_OBJECT_NOT_FOUND)",
+	}
+	m := newTestManager(f)
+
+	if err := m.DeleteVM(context.Background(), "paisajes"); err != nil {
+		t.Fatalf("DeleteVM() de una VM inexistente = %v, se esperaba nil", err)
+	}
+
+	if want := []string{"controlvm", "unregistervm"}; !slices.Equal(f.calls, want) {
+		t.Errorf("comandos = %v, se esperaba un solo intento de unregistervm", f.calls)
 	}
 }

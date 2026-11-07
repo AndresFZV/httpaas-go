@@ -2,6 +2,7 @@ package vbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os/exec"
@@ -15,7 +16,13 @@ const (
 	storageController = "SATA"
 	unregisterRetries = 5
 	unregisterWait    = time.Second
+
+	// vboxNotFoundCode es el código de error de VirtualBox cuando no encuentra un objeto.
+	vboxNotFoundCode = "VBOX_E_OBJECT_NOT_FOUND"
 )
+
+// ErrVMNotFound indica que VirtualBox no tiene registrada una VM con ese nombre.
+var ErrVMNotFound = errors.New("la máquina virtual no existe")
 
 // Config son los parámetros de VirtualBox para crear las instancias.
 type Config struct {
@@ -74,14 +81,16 @@ func (m *Manager) CreateVM(ctx context.Context, name string) error {
 }
 
 // DeleteVM apaga la VM si está encendida y la borra junto con su disco diferencial.
+// Si la VM no existe, no hay nada que borrar y no se considera un error.
 func (m *Manager) DeleteVM(ctx context.Context, name string) error {
-	// Falla si la VM ya está apagada; en ese caso se continúa con el borrado.
+	// Falla si la VM ya está apagada o no existe; en ese caso se continúa con el borrado.
 	_ = m.exec(ctx, "controlvm", name, "poweroff")
 
 	// Tras apagarla, VirtualBox tarda un momento en liberar el bloqueo de la VM.
 	var err error
 	for attempt := 1; attempt <= unregisterRetries; attempt++ {
-		if err = m.exec(ctx, "unregistervm", name, "--delete"); err == nil {
+		err = m.exec(ctx, "unregistervm", name, "--delete")
+		if err == nil || errors.Is(err, ErrVMNotFound) {
 			return nil
 		}
 		m.sleep(unregisterWait)
@@ -89,12 +98,16 @@ func (m *Manager) DeleteVM(ctx context.Context, name string) error {
 	return fmt.Errorf("borrar VM %s: %w", name, err)
 }
 
+// exec ejecuta VBoxManage y traduce el error de objeto inexistente a ErrVMNotFound.
 func (m *Manager) exec(ctx context.Context, args ...string) error {
 	out, err := m.run(ctx, args...)
-	if err != nil {
-		return fmt.Errorf("VBoxManage %s: %w: %s", args[0], err, strings.TrimSpace(string(out)))
+	if err == nil {
+		return nil
 	}
-	return nil
+	if strings.Contains(string(out), vboxNotFoundCode) {
+		return fmt.Errorf("VBoxManage %s: %w", args[0], ErrVMNotFound)
+	}
+	return fmt.Errorf("VBoxManage %s: %w: %s", args[0], err, strings.TrimSpace(string(out)))
 }
 
 func (m *Manager) execVBoxManage(ctx context.Context, args ...string) ([]byte, error) {

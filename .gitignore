@@ -16,4 +16,5 @@ secrets/
 .vscode/
 .idea/
 Thumbs.db
-.DS_Store*.zip
+.DS_Store
+*.zip

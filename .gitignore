@@ -1,0 +1,19 @@
+# Binarios
+*.exe
+/httpaas-go
+
+# Estado en tiempo de ejecución
+data/
+uploads/
+
+# Llaves y secretos (clave TSIG, llaves SSH)
+*.key
+*.pem
+id_*
+secrets/
+
+# Editor y sistema
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

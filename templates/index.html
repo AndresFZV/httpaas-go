@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <main class="panel">
+        <h1>{{.Title}}</h1>
+
+        <form class="request-form" method="post" enctype="multipart/form-data">
+            <div class="field">
+                <label for="hostname">Nombre del host</label>
+                <div class="field-row">
+                    <input type="text" id="hostname" name="hostname"
+                           placeholder="paisajes" autocomplete="off" required>
+                    <button type="submit" formaction="/instances">Aceptar</button>
+                </div>
+            </div>
+
+            <div class="field">
+                <label for="content">Contenido web (comprimido)</label>
+                <div class="field-row">
+                    <input type="file" id="content" name="content" accept=".zip">
+                    <button type="submit" formaction="/instances/deploy">Publicar</button>
+                </div>
+            </div>
+        </form>
+
+        <section class="instances">
+            <h2>Instancias disponibles</h2>
+            <p class="empty">Todavía no hay instancias aprovisionadas.</p>
+        </section>
+    </main>
+</body>
+</html>

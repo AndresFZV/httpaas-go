@@ -96,3 +96,29 @@ button:hover {
     color: var(--muted);
     font-size: 0.9rem;
 }
+
+.alert {
+    max-width: 520px;
+    margin: 0 0 16px;
+    padding: 10px 14px;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+
+.alert-error {
+    background: #fde8e8;
+    border: 1px solid var(--danger);
+    color: #8a0000;
+}
+
+.alert-success {
+    background: #e6f4ea;
+    border: 1px solid #2e7d32;
+    color: #1b5e20;
+}
+
+.hint {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 0.8rem;
+}

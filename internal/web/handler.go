@@ -2,8 +2,10 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"html/template"
+	"io"
 	"log"
 	"net/http"
 	"path/filepath"
@@ -13,24 +15,39 @@ import (
 
 const pageTitle = "Gestión de páginas y aplicaciones web"
 
+// Provisioner crea y elimina instancias completas (VM, red y DNS).
+type Provisioner interface {
+	Provision(ctx context.Context, hostname string) (instance.Instance, error)
+	Delete(ctx context.Context, hostname string) error
+}
+
+// Deployer publica el contenido de un .zip en una instancia.
+type Deployer interface {
+	Deploy(ctx context.Context, host string, archive io.Reader) error
+}
+
 // Handler agrupa las dependencias de los handlers HTTP de la aplicación.
 type Handler struct {
-	store     *instance.Store
-	templates *template.Template
-	staticDir string
+	store       *instance.Store
+	provisioner Provisioner
+	deployer    Deployer
+	templates   *template.Template
+	staticDir   string
 }
 
 // NewHandler carga las plantillas HTML de templatesDir y prepara el servidor de archivos estáticos.
-func NewHandler(store *instance.Store, templatesDir, staticDir string) (*Handler, error) {
+func NewHandler(store *instance.Store, provisioner Provisioner, deployer Deployer, templatesDir, staticDir string) (*Handler, error) {
 	tmpl, err := template.ParseGlob(filepath.Join(templatesDir, "*.html"))
 	if err != nil {
 		return nil, fmt.Errorf("cargar plantillas: %w", err)
 	}
 
 	return &Handler{
-		store:     store,
-		templates: tmpl,
-		staticDir: staticDir,
+		store:       store,
+		provisioner: provisioner,
+		deployer:    deployer,
+		templates:   tmpl,
+		staticDir:   staticDir,
 	}, nil
 }
 

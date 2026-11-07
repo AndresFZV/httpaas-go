@@ -4,25 +4,29 @@ import (
 	"log"
 	"net/http"
 	"net/netip"
-	"os"
-	"path/filepath"
+	"time"
 
+	"github.com/AndresFZV/httpaas-go/internal/deploy"
+	"github.com/AndresFZV/httpaas-go/internal/dns"
 	"github.com/AndresFZV/httpaas-go/internal/instance"
+	"github.com/AndresFZV/httpaas-go/internal/provision"
+	"github.com/AndresFZV/httpaas-go/internal/remote"
+	"github.com/AndresFZV/httpaas-go/internal/vbox"
 	"github.com/AndresFZV/httpaas-go/internal/web"
 )
 
-// Rango de IPs para las instancias Apache; la .10 es del servidor DNS ns.
-const (
-	firstInstanceIP = "192.168.10.30"
-	lastInstanceIP  = "192.168.10.254"
-)
+// apacheWebRoot es el directorio que Apache sirve en cada instancia.
+const apacheWebRoot = "/var/www/html"
 
 func main() {
-	addr := getEnv("HTTPAAS_ADDR", ":8080")
-	dataFile := getEnv("HTTPAAS_DATA_FILE", filepath.Join("data", "instances.json"))
+	cfg, err := loadConfig()
+	if err != nil {
+		log.Fatalf("configuración inválida: %v", err)
+	}
+	cfg.logSummary()
 
 	store, err := instance.NewStore(
-		dataFile,
+		cfg.DataFile,
 		netip.MustParseAddr(firstInstanceIP),
 		netip.MustParseAddr(lastInstanceIP),
 	)
@@ -30,7 +34,33 @@ func main() {
 		log.Fatalf("no se pudo cargar el registro de instancias: %v", err)
 	}
 
-	handler, err := web.NewHandler(store, "templates", "static")
+	vms := vbox.NewManager(vbox.Config{
+		VBoxManagePath: cfg.VBoxManage,
+		TemplateDisk:   cfg.TemplateDisk,
+		HostOnlyIF:     cfg.HostOnlyIF,
+		MemoryMB:       vmMemoryMB,
+		CPUs:           vmCPUs,
+	})
+
+	ssh := remote.NewClient(remote.Config{
+		SSHPath:        "ssh",
+		User:           cfg.SSHUser,
+		KeyFile:        cfg.SSHKey,
+		ConnectTimeout: sshConnectTimeout,
+	})
+
+	dnsUpdater := dns.NewUpdater(ssh, cfg.DNSServer.String(), instance.Domain, dnsTTL)
+
+	provisioner := provision.New(provision.Config{
+		TemplateIP:   cfg.TemplateIP,
+		Interface:    cfg.Interface,
+		BootTimeout:  bootTimeout,
+		PollInterval: sshPollInterval,
+	}, store, vms, ssh, dnsUpdater)
+
+	deployer := deploy.NewDeployer(ssh, apacheWebRoot)
+
+	handler, err := web.NewHandler(store, provisioner, deployer, "templates", "static")
 	if err != nil {
 		log.Fatalf("no se pudo inicializar la aplicación: %v", err)
 	}
@@ -38,16 +68,14 @@ func main() {
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
-	log.Printf("servidor escuchando en http://localhost%s", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	server := &http.Server{
+		Addr:              cfg.Addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	log.Printf("servidor escuchando en http://localhost%s", cfg.Addr)
+	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("el servidor se detuvo: %v", err)
 	}
-}
-
-// getEnv devuelve el valor de la variable de entorno key o fallback si no está definida.
-func getEnv(key, fallback string) string {
-	if value, ok := os.LookupEnv(key); ok {
-		return value
-	}
-	return fallback
 }

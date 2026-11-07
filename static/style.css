@@ -1,0 +1,98 @@
+:root {
+    --panel-bg: #dae3f3;
+    --panel-border: #2f5597;
+    --input-bg: #e7e6e6;
+    --input-border: #8497b0;
+    --danger: #e00000;
+    --text: #1f1f1f;
+    --muted: #595959;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    padding: 32px 16px;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    color: var(--text);
+    background: #f4f6f9;
+}
+
+.panel {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 24px 32px;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
+}
+
+h1 {
+    margin: 0 0 24px;
+    font-size: 1.6rem;
+    font-weight: 400;
+    text-align: center;
+}
+
+h2 {
+    margin: 0 0 12px;
+    font-size: 1rem;
+    font-weight: 500;
+}
+
+.request-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-width: 520px;
+}
+
+.field label {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 0.85rem;
+}
+
+.field-row {
+    display: flex;
+    gap: 8px;
+}
+
+.field-row input {
+    flex: 1;
+    padding: 8px 10px;
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-radius: 3px;
+    font-size: 0.95rem;
+}
+
+button {
+    min-width: 96px;
+    padding: 8px 14px;
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-radius: 3px;
+    font-size: 0.95rem;
+    cursor: pointer;
+}
+
+button:hover {
+    background: #d0cece;
+}
+
+.instances {
+    margin-top: 32px;
+    padding: 16px;
+    background: #ffffff;
+    border: 1px solid var(--input-border);
+    border-radius: 6px;
+}
+
+.empty {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.9rem;
+}

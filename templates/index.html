@@ -16,6 +16,7 @@
         {{if .Success}}
             <p class="alert alert-success" role="status">{{.Success}}</p>
         {{end}}
+                <p id="progress" class="alert alert-info" role="status" hidden></p>
 
         <form class="request-form" method="post" enctype="multipart/form-data">
             <div class="field">
@@ -74,5 +75,26 @@
             {{end}}
         </section>
     </main>
+        <script>
+        const progressMessages = {
+            "/instances": "Creando la instancia: se inicia la VM y se configura su red. Puede tardar un par de minutos…",
+            "/instances/deploy": "Publicando el contenido web…",
+        };
+
+        document.querySelectorAll("form").forEach((form) => {
+            form.addEventListener("submit", (event) => {
+                const action = event.submitter?.getAttribute("formaction") ?? form.getAttribute("action");
+                const message = progressMessages[action] ?? "Eliminando la instancia…";
+
+                const progress = document.getElementById("progress");
+                progress.textContent = message;
+                progress.hidden = false;
+
+                document.querySelectorAll("button").forEach((button) => {
+                    button.disabled = true;
+                });
+            });
+        });
+    </script>
 </body>
 </html>

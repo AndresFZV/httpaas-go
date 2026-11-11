@@ -8,6 +8,7 @@ import (
 
 	"github.com/AndresFZV/httpaas-go/internal/deploy"
 	"github.com/AndresFZV/httpaas-go/internal/dns"
+	"github.com/AndresFZV/httpaas-go/internal/hostnet"
 	"github.com/AndresFZV/httpaas-go/internal/instance"
 	"github.com/AndresFZV/httpaas-go/internal/provision"
 	"github.com/AndresFZV/httpaas-go/internal/remote"
@@ -58,7 +59,7 @@ func main() {
 		TemplateIP:   cfg.TemplateIP,
 		BootTimeout:  bootTimeout,
 		PollInterval: sshPollInterval,
-	}, store, vms, ssh, dnsUpdater)
+	}, store, vms, ssh, dnsUpdater, hostnet.NewARPCache())
 
 	deployer := deploy.NewDeployer(ssh, apacheWebRoot)
 

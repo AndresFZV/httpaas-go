@@ -31,6 +31,13 @@ type DNSUpdater interface {
 	DeleteRecord(ctx context.Context, hostname string) error
 }
 
+// NeighborCache olvida la tarjeta de red asociada a una IP en el anfitrión.
+// Hace falta porque varias VMs usan la misma IP (la temporal, o una IP liberada al eliminar),
+// cada una con una MAC distinta, y Windows sigue usando la MAC anterior.
+type NeighborCache interface {
+	Forget(ctx context.Context, ip netip.Addr) error
+}
+
 // Config son los parámetros del aprovisionamiento.
 type Config struct {
 	TemplateIP   netip.Addr    // IP con la que arranca toda VM clonada de la plantilla
@@ -40,17 +47,18 @@ type Config struct {
 
 // Provisioner crea y elimina instancias completas del servidor Apache.
 type Provisioner struct {
-	mu    sync.Mutex
-	cfg   Config
-	store *instance.Store
-	vms   VMManager
-	ssh   RemoteRunner
-	dns   DNSUpdater
+	mu        sync.Mutex
+	cfg       Config
+	store     *instance.Store
+	vms       VMManager
+	ssh       RemoteRunner
+	dns       DNSUpdater
+	neighbors NeighborCache
 }
 
 // New crea un Provisioner con sus dependencias.
-func New(cfg Config, store *instance.Store, vms VMManager, ssh RemoteRunner, dns DNSUpdater) *Provisioner {
-	return &Provisioner{cfg: cfg, store: store, vms: vms, ssh: ssh, dns: dns}
+func New(cfg Config, store *instance.Store, vms VMManager, ssh RemoteRunner, dns DNSUpdater, neighbors NeighborCache) *Provisioner {
+	return &Provisioner{cfg: cfg, store: store, vms: vms, ssh: ssh, dns: dns, neighbors: neighbors}
 }
 
 // Provision reserva el nombre y la IP, crea la VM, le asigna hostname e IP definitivos
@@ -118,7 +126,12 @@ func (p *Provisioner) createAndConfigure(ctx context.Context, inst instance.Inst
 	return true, nil
 }
 
+// waitForSSH limpia la caché ARP de ip y espera a que la VM responda por SSH en esa IP.
 func (p *Provisioner) waitForSSH(ctx context.Context, ip netip.Addr) error {
+	if err := p.neighbors.Forget(ctx, ip); err != nil {
+		log.Printf("ADVERTENCIA: %v (¿la app se ejecuta como administrador?)", err)
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.BootTimeout)
 	defer cancel()
 	return p.ssh.WaitForSSH(ctx, ip.String(), p.cfg.PollInterval)

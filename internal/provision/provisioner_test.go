@@ -64,6 +64,15 @@ func (f *fakeDNS) DeleteRecord(_ context.Context, hostname string) error {
 	return nil
 }
 
+type fakeNeighbors struct {
+	forgotten []string
+}
+
+func (f *fakeNeighbors) Forget(_ context.Context, ip netip.Addr) error {
+	f.forgotten = append(f.forgotten, ip.String())
+	return nil
+}
+
 func newTestProvisioner(t *testing.T, dns *fakeDNS) (*Provisioner, *instance.Store, *fakeVMs, *fakeSSH) {
 	t.Helper()
 
@@ -83,7 +92,7 @@ func newTestProvisioner(t *testing.T, dns *fakeDNS) (*Provisioner, *instance.Sto
 		BootTimeout:  time.Second,
 		PollInterval: time.Millisecond,
 	}
-	return New(cfg, store, vms, ssh, dns), store, vms, ssh
+	return New(cfg, store, vms, ssh, dns, &fakeNeighbors{}), store, vms, ssh
 }
 
 func TestProvisionRunsAllSteps(t *testing.T) {
@@ -166,5 +175,20 @@ func TestDeleteRemovesDNSVMAndRecord(t *testing.T) {
 	}
 	if _, err := store.Get("paisajes"); !errors.Is(err, instance.ErrNotFound) {
 		t.Errorf("la instancia sigue en el registro: %v", err)
+	}
+}
+
+func TestProvisionForgetsARPBeforeWaiting(t *testing.T) {
+	dns := &fakeDNS{}
+	p, _, _, _ := newTestProvisioner(t, dns)
+	neighbors := &fakeNeighbors{}
+	p.neighbors = neighbors
+
+	if _, err := p.Provision(context.Background(), "paisajes"); err != nil {
+		t.Fatalf("Provision() error: %v", err)
+	}
+
+	if want := []string{"192.168.10.20", "192.168.10.30"}; !slices.Equal(neighbors.forgotten, want) {
+		t.Errorf("IPs limpiadas = %v, se esperaba %v", neighbors.forgotten, want)
 	}
 }

@@ -13,6 +13,20 @@ import (
 
 const cleanupTimeout = 2 * time.Minute
 
+// Stage es una etapa del aprovisionamiento que se informa mientras avanza.
+type Stage int
+
+const (
+	StageCreateVM    Stage = iota + 1 // la IP ya está reservada; se crea la VM
+	StageWaitBoot                     // se espera a que la VM responda en la IP temporal
+	StageConfigure                    // se cambian hostname e IP
+	StageWaitFinalIP                  // se espera a que la VM responda en la IP definitiva
+	StageRegisterDNS                  // se registra el hostname en Bind9
+)
+
+// ReportFunc recibe cada etapa que empieza, junto con la instancia reservada (nombre e IP).
+type ReportFunc func(stage Stage, inst instance.Instance)
+
 // VMManager crea y elimina máquinas virtuales.
 type VMManager interface {
 	CreateVM(ctx context.Context, name string) error
@@ -62,9 +76,14 @@ func New(cfg Config, store *instance.Store, vms VMManager, ssh RemoteRunner, dns
 }
 
 // Provision reserva el nombre y la IP, crea la VM, le asigna hostname e IP definitivos
-// y la registra en el DNS. Si un paso falla, deshace los anteriores.
+// y la registra en el DNS, informando cada etapa a report (puede ser nil).
+// Si un paso falla, deshace los anteriores.
 // Las instancias se crean de a una, porque todas arrancan con la IP temporal de la plantilla.
-func (p *Provisioner) Provision(ctx context.Context, hostname string) (instance.Instance, error) {
+func (p *Provisioner) Provision(ctx context.Context, hostname string, report ReportFunc) (instance.Instance, error) {
+	if report == nil {
+		report = func(Stage, instance.Instance) {}
+	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -73,7 +92,7 @@ func (p *Provisioner) Provision(ctx context.Context, hostname string) (instance.
 		return instance.Instance{}, err
 	}
 
-	vmCreated, err := p.createAndConfigure(ctx, inst)
+	vmCreated, err := p.createAndConfigure(ctx, inst, report)
 	if err != nil {
 		p.rollback(inst, vmCreated)
 		return instance.Instance{}, err
@@ -102,24 +121,29 @@ func (p *Provisioner) Delete(ctx context.Context, hostname string) error {
 }
 
 // createAndConfigure ejecuta los pasos del aprovisionamiento e indica si la VM alcanzó a crearse.
-func (p *Provisioner) createAndConfigure(ctx context.Context, inst instance.Instance) (vmCreated bool, err error) {
+func (p *Provisioner) createAndConfigure(ctx context.Context, inst instance.Instance, report ReportFunc) (vmCreated bool, err error) {
+	report(StageCreateVM, inst)
 	if err := p.vms.CreateVM(ctx, inst.Hostname); err != nil {
 		return false, err
 	}
 
+	report(StageWaitBoot, inst)
 	if err := p.waitForSSH(ctx, p.cfg.TemplateIP); err != nil {
 		return true, fmt.Errorf("la VM %s no respondió en la IP temporal: %w", inst.Hostname, err)
 	}
 
 	// El script de la plantilla reinicia la VM a los 3 segundos; el comando termina antes.
+	report(StageConfigure, inst)
 	if err := p.ssh.Run(ctx, p.cfg.TemplateIP.String(), configureCommand(inst.Hostname, inst.IP)); err != nil {
 		return true, fmt.Errorf("configurar hostname e IP de %s: %w", inst.Hostname, err)
 	}
 
+	report(StageWaitFinalIP, inst)
 	if err := p.waitForSSH(ctx, inst.IP); err != nil {
 		return true, fmt.Errorf("la VM %s no respondió en %s: %w", inst.Hostname, inst.IP, err)
 	}
 
+	report(StageRegisterDNS, inst)
 	if err := p.dns.AddRecord(ctx, inst.Hostname, inst.IP); err != nil {
 		return true, err
 	}

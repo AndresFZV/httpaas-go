@@ -221,4 +221,63 @@
     updateHostname();
     updateFile();
   }
+
+  // Progreso de un despliegue en curso.
+  const progress = document.querySelector("[data-progress]");
+  if (progress) {
+    const apiURL = progress.dataset.api;
+    const publishStep = Number(progress.dataset.publishStep);
+    const stepLabels = { complete: "Completado", current: "En proceso...", pending: "Pendiente", skipped: "Omitido" };
+
+    function renderProgress(snap) {
+      progress.querySelector("[data-percent]").textContent = `${snap.percent}%`;
+      progress.querySelector("[data-bar]").style.width = `${snap.percent}%`;
+
+      progress.querySelectorAll("[data-step]").forEach((element) => {
+        const index = Number(element.dataset.step);
+        const state = index < snap.step ? "complete" : index === snap.step ? "current" : "pending";
+        const skipped = index === publishStep && !snap.hasContent && state === "complete";
+        element.className = `step ${state}${skipped ? " skipped" : ""}`;
+        element.querySelector("small").textContent = skipped ? stepLabels.skipped : stepLabels[state];
+      });
+
+      progress.querySelectorAll("[data-infra]").forEach((item) => {
+        let ready = snap.step > Number(item.dataset.readyAfter);
+        let value = ready ? item.dataset.ready : item.dataset.pending;
+
+        if (item.dataset.infra === "ip") {
+          ready = snap.ip !== "";
+          value = ready ? snap.ip : item.dataset.pending;
+        }
+        if (item.dataset.infra === "content" && !snap.hasContent) {
+          ready = true;
+          value = item.dataset.ready;
+        }
+
+        item.classList.toggle("ready", ready);
+        item.querySelector("strong").classList.toggle("pending-value", !ready);
+        item.querySelector("[data-value]").textContent = value;
+      });
+    }
+
+    async function pollProgress() {
+      try {
+        const response = await fetch(apiURL, { headers: { Accept: "application/json" }, cache: "no-store" });
+        if (response.ok) {
+          const snap = await response.json();
+          if (snap.status !== "running") {
+            // El servidor genera la pantalla final de éxito o de error.
+            window.location.reload();
+            return;
+          }
+          renderProgress(snap);
+        }
+      } catch {
+        // Si falla una consulta (por ejemplo, la app se está reiniciando), se intenta en la siguiente vuelta.
+      }
+      setTimeout(pollProgress, 2000);
+    }
+
+    pollProgress();
+  }
 })();

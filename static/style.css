@@ -387,3 +387,17 @@ dialog.modal::backdrop { background: rgba(15,23,42,.55); backdrop-filter: blur(3
   .modal-actions > * { width: 100%; justify-content: center; }
   .toast { right: 16px; bottom: 16px; left: 16px; }
 }
+
+/* Indicadores de etapa: el CSS muestra el que corresponde a la clase del paso */
+.step-indicator .ind-check, .step-indicator .ind-alert, .step-indicator .ind-dot { display: none; }
+.step.complete .ind-num, .step.current .ind-num, .step.error .ind-num { display: none; }
+.step.complete .ind-check { display: block; }
+.step.current .ind-dot { display: block; }
+.step.error .ind-alert { display: block; }
+.step:not(.current) .active-step-details { display: none; }
+.step.skipped .step-indicator { border-color: #d9e0e8; color: #94a3b8; background: #f8fafc; }
+.step.skipped small { color: #94a3b8; }
+.infrastructure-item .ready-check { display: none; }
+.infrastructure-item.ready .ready-check { display: block; }
+.error-actions form { flex: 1; display: flex; }
+.error-actions form > button { flex: 1; }

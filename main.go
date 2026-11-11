@@ -4,9 +4,11 @@ import (
 	"log"
 	"net/http"
 	"net/netip"
+	"path/filepath"
 	"time"
 
 	"github.com/AndresFZV/httpaas-go/internal/deploy"
+	"github.com/AndresFZV/httpaas-go/internal/deployment"
 	"github.com/AndresFZV/httpaas-go/internal/dns"
 	"github.com/AndresFZV/httpaas-go/internal/hostnet"
 	"github.com/AndresFZV/httpaas-go/internal/instance"
@@ -62,6 +64,12 @@ func main() {
 
 	deployer := deploy.NewDeployer(ssh, apacheWebRoot)
 
+	uploadsDir := filepath.Join(filepath.Dir(cfg.DataFile), "uploads")
+	deployments, err := deployment.NewManager(uploadsDir, provisioner, deployer, deployment.NewHTTPVerifier())
+	if err != nil {
+		log.Fatalf("no se pudo preparar los despliegues: %v", err)
+	}
+
 	handler, err := web.NewHandler(web.Config{
 		Domain:       instance.Domain,
 		DNSServer:    cfg.DNSServer.String(),
@@ -69,7 +77,7 @@ func main() {
 		LastIP:       lastIP,
 		TemplatesDir: "templates",
 		StaticDir:    "static",
-	}, store, provisioner, deployer)
+	}, store, provisioner, deployments)
 	if err != nil {
 		log.Fatalf("no se pudo inicializar la aplicación: %v", err)
 	}

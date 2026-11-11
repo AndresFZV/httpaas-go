@@ -99,7 +99,7 @@ func TestProvisionRunsAllSteps(t *testing.T) {
 	dns := &fakeDNS{}
 	p, store, vms, ssh := newTestProvisioner(t, dns)
 
-	inst, err := p.Provision(context.Background(), "paisajes")
+	inst, err := p.Provision(context.Background(), "paisajes", nil)
 	if err != nil {
 		t.Fatalf("Provision() error: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestProvisionRollsBackWhenDNSFails(t *testing.T) {
 	dns := &fakeDNS{failAdd: true}
 	p, store, vms, _ := newTestProvisioner(t, dns)
 
-	if _, err := p.Provision(context.Background(), "paisajes"); err == nil {
+	if _, err := p.Provision(context.Background(), "paisajes", nil); err == nil {
 		t.Fatal("Provision() no devolvió error")
 	}
 
@@ -147,10 +147,10 @@ func TestProvisionRejectsDuplicateWithoutCreatingVM(t *testing.T) {
 	dns := &fakeDNS{}
 	p, _, vms, _ := newTestProvisioner(t, dns)
 
-	if _, err := p.Provision(context.Background(), "paisajes"); err != nil {
+	if _, err := p.Provision(context.Background(), "paisajes", nil); err != nil {
 		t.Fatalf("primer Provision() error: %v", err)
 	}
-	_, err := p.Provision(context.Background(), "paisajes")
+	_, err := p.Provision(context.Background(), "paisajes", nil)
 	if !errors.Is(err, instance.ErrHostnameTaken) {
 		t.Errorf("Provision() duplicado = %v, se esperaba %v", err, instance.ErrHostnameTaken)
 	}
@@ -162,7 +162,7 @@ func TestProvisionRejectsDuplicateWithoutCreatingVM(t *testing.T) {
 func TestDeleteRemovesDNSVMAndRecord(t *testing.T) {
 	dns := &fakeDNS{}
 	p, store, vms, _ := newTestProvisioner(t, dns)
-	if _, err := p.Provision(context.Background(), "paisajes"); err != nil {
+	if _, err := p.Provision(context.Background(), "paisajes", nil); err != nil {
 		t.Fatalf("Provision() error: %v", err)
 	}
 
@@ -184,11 +184,35 @@ func TestProvisionForgetsARPBeforeWaiting(t *testing.T) {
 	neighbors := &fakeNeighbors{}
 	p.neighbors = neighbors
 
-	if _, err := p.Provision(context.Background(), "paisajes"); err != nil {
+	if _, err := p.Provision(context.Background(), "paisajes", nil); err != nil {
 		t.Fatalf("Provision() error: %v", err)
 	}
 
 	if want := []string{"192.168.10.20", "192.168.10.30"}; !slices.Equal(neighbors.forgotten, want) {
 		t.Errorf("IPs limpiadas = %v, se esperaba %v", neighbors.forgotten, want)
+	}
+}
+
+func TestProvisionReportsStagesInOrder(t *testing.T) {
+	dns := &fakeDNS{}
+	p, _, _, _ := newTestProvisioner(t, dns)
+
+	var stages []Stage
+	var ips []string
+	report := func(stage Stage, inst instance.Instance) {
+		stages = append(stages, stage)
+		ips = append(ips, inst.IP.String())
+	}
+
+	if _, err := p.Provision(context.Background(), "paisajes", report); err != nil {
+		t.Fatalf("Provision() error: %v", err)
+	}
+
+	want := []Stage{StageCreateVM, StageWaitBoot, StageConfigure, StageWaitFinalIP, StageRegisterDNS}
+	if !slices.Equal(stages, want) {
+		t.Errorf("etapas = %v, se esperaba %v", stages, want)
+	}
+	if ips[0] != "192.168.10.30" {
+		t.Errorf("la IP reservada no llegó en la primera etapa: %v", ips)
 	}
 }

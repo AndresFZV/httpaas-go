@@ -14,6 +14,7 @@ import (
 	"github.com/AndresFZV/httpaas-go/internal/health"
 	"github.com/AndresFZV/httpaas-go/internal/hostnet"
 	"github.com/AndresFZV/httpaas-go/internal/instance"
+	"github.com/AndresFZV/httpaas-go/internal/power"
 	"github.com/AndresFZV/httpaas-go/internal/provision"
 	"github.com/AndresFZV/httpaas-go/internal/remote"
 	"github.com/AndresFZV/httpaas-go/internal/vbox"
@@ -26,8 +27,11 @@ const apacheWebRoot = "/var/www/html"
 // dnsKeyFile es la clave TSIG de Bind9 dentro del servidor ns.
 const dnsKeyFile = "/etc/bind/cloud-key.key"
 
-// healthInterval es cada cuánto se verifica la infraestructura y las instancias.
-const healthInterval = 15 * time.Second
+// Intervalos de verificación: normal, y mientras haya acciones o despliegues en curso.
+const (
+	healthInterval     = 5 * time.Second
+	healthFastInterval = 3 * time.Second
+)
 
 func main() {
 	cfg, err := loadConfig()
@@ -75,27 +79,45 @@ func main() {
 		log.Fatalf("no se pudo preparar los despliegues: %v", err)
 	}
 
-	monitor := health.NewMonitor(health.Config{
-		DNSServer: cfg.DNSServer,
-		Domain:    instance.Domain,
-		Interval:  healthInterval,
-	}, store, vms)
-	monitor.Start(context.Background())
+	powerCtl := power.NewController(vms)
 
-	// Al terminar un despliegue se verifica de inmediato, para que el estado de la instancia nueva
-	// no espere a la siguiente verificación periódica.
+	monitor := health.NewMonitor(health.Config{
+		DNSServer:    cfg.DNSServer,
+		Domain:       instance.Domain,
+		Interval:     healthInterval,
+		FastInterval: healthFastInterval,
+	}, store, vms)
+	monitor.SetBusyCheck(func() bool {
+		return len(powerCtl.Pending()) > 0 ||
+			len(deployments.ActiveHostnames()) > 0 ||
+			!monitor.Snapshot().Operational()
+	})
+
+	// Al terminar un despliegue o una acción de encendido se verifica de inmediato.
 	deployments.OnFinished(func(string) {
 		go monitor.Check(context.Background())
 	})
+	powerCtl.OnChange(func() {
+		monitor.Check(context.Background())
+	})
+
+	monitor.Start(context.Background())
 
 	handler, err := web.NewHandler(web.Config{
 		Domain:       instance.Domain,
 		DNSServer:    cfg.DNSServer.String(),
+		NSVMName:     cfg.NSVMName,
 		FirstIP:      firstIP,
 		LastIP:       lastIP,
 		TemplatesDir: "templates",
 		StaticDir:    "static",
-	}, store, provisioner, deployments, monitor)
+	}, web.Deps{
+		Store:       store,
+		Provisioner: provisioner,
+		Deployments: deployments,
+		Monitor:     monitor,
+		Power:       powerCtl,
+	})
 	if err != nil {
 		log.Fatalf("no se pudo inicializar la aplicación: %v", err)
 	}

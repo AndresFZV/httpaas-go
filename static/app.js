@@ -77,7 +77,7 @@
     });
   }
 
-    // Modal para publicar contenido en una instancia existente.
+  // Modal para publicar contenido en una instancia existente.
   const publishDialog = document.querySelector("[data-publish-dialog]");
   if (publishDialog) {
     const form = publishDialog.querySelector("form");
@@ -168,9 +168,11 @@
     });
   }
 
-  // Buscador por hostname y filtro por estado.
-  const search = document.querySelector("[data-search]");
-  if (search) {
+  // Buscador por hostname y filtro por estado. Se vuelve a llamar cuando el contenido se actualiza.
+  function initSearch() {
+    const search = document.querySelector("[data-search]");
+    if (!search) return;
+
     const statusFilter = document.querySelector("[data-status-filter]");
     const items = document.querySelectorAll("[data-instance]");
     const empty = document.querySelector("[data-search-empty]");
@@ -204,7 +206,11 @@
       applyFilters();
       search.focus();
     }));
+
+    applyFilters();
   }
+
+  initSearch();
 
   // Formulario de despliegue.
   const deployForm = document.querySelector("[data-deploy-form]");
@@ -375,5 +381,91 @@
     }
 
     pollProgress();
+  }
+
+  // Formularios de encendido: confirmación (apagar, reiniciar) y botones desactivados al enviar.
+  document.addEventListener("submit", (event) => {
+    const form = event.target;
+    if (!form.matches("[data-power-form]")) return;
+
+    if (form.dataset.confirm && !window.confirm(form.dataset.confirm)) {
+      event.preventDefault();
+      return;
+    }
+    form.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+  });
+
+  // Actualización del estado en vivo: el dashboard y la lista de instancias piden su propio HTML
+  // y reemplazan solo las partes que cambiaron, sin recargar la página.
+  const content = document.querySelector("main.content");
+  const isLivePage = document.querySelector("[data-instance], .platform-strip, .instances-toolbar");
+
+  if (content && isLivePage) {
+    // Los avisos llegan como parámetros de la URL; se quitan para que una recarga no los repita.
+    if (window.location.search) {
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+
+    const transitionalStates = new Set(["creating", "starting", "stopping", "restarting", "checking"]);
+    const sharedParts = [".infra-card", ".service-status", ".nav-count"];
+
+    function inTransition() {
+      const statuses = [...document.querySelectorAll("[data-instance][data-status]")];
+      return statuses.some((item) => transitionalStates.has(item.dataset.status))
+        || ["pending", "danger"].includes(document.body.dataset.health)
+        || ["starting", "restarting"].includes(document.body.dataset.ns);
+    }
+
+    // No se actualiza mientras el usuario escribe o tiene un modal abierto.
+    function userIsBusy() {
+      return document.querySelector("dialog[open]")
+        || document.activeElement?.matches("input, select, textarea");
+    }
+
+    function swapContent(fresh) {
+      const search = document.querySelector("[data-search]")?.value ?? "";
+      const filter = document.querySelector("[data-status-filter]")?.value ?? "";
+
+      content.innerHTML = fresh.innerHTML;
+
+      const newSearch = document.querySelector("[data-search]");
+      const newFilter = document.querySelector("[data-status-filter]");
+      if (newSearch) newSearch.value = search;
+      if (newFilter) newFilter.value = filter;
+      initSearch();
+    }
+
+    async function refresh() {
+      if (!userIsBusy()) {
+        try {
+          const response = await fetch(window.location.pathname, { cache: "no-store" });
+          if (response.ok) {
+            const doc = new DOMParser().parseFromString(await response.text(), "text/html");
+
+            // El aviso de la página nueva no se copia: ya se mostró.
+            const fresh = doc.querySelector("main.content");
+            if (fresh && fresh.innerHTML !== content.innerHTML) {
+              swapContent(fresh);
+            }
+
+            sharedParts.forEach((selector) => {
+              const current = document.querySelector(selector);
+              const updated = doc.querySelector(selector);
+              if (current && updated && current.outerHTML !== updated.outerHTML) {
+                current.outerHTML = updated.outerHTML;
+              }
+            });
+
+            document.body.dataset.health = doc.body.dataset.health;
+            document.body.dataset.ns = doc.body.dataset.ns;
+          }
+        } catch {
+          // Si falla una consulta, se intenta en la siguiente vuelta.
+        }
+      }
+      setTimeout(refresh, inTransition() ? 3000 : 5000);
+    }
+
+    setTimeout(refresh, inTransition() ? 3000 : 5000);
   }
 })();

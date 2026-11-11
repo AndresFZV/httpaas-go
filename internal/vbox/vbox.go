@@ -109,6 +109,59 @@ func (m *Manager) Version(ctx context.Context) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// RunningVMs devuelve los nombres de las máquinas virtuales encendidas.
+func (m *Manager) RunningVMs(ctx context.Context) (map[string]bool, error) {
+	out, err := m.run(ctx, "list", "runningvms")
+	if err != nil {
+		return nil, fmt.Errorf("VBoxManage list runningvms: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+
+	running := make(map[string]bool)
+	for _, line := range strings.Split(string(out), "\n") {
+		// Cada línea tiene la forma: "nombre de la VM" {uuid}
+		line = strings.TrimSpace(line)
+		end := strings.LastIndex(line, `"`)
+		if !strings.HasPrefix(line, `"`) || end <= 0 {
+			continue
+		}
+		running[line[1:end]] = true
+	}
+	return running, nil
+}
+
+// StartVM enciende la VM sin interfaz gráfica.
+func (m *Manager) StartVM(ctx context.Context, name string) error {
+	if err := m.exec(ctx, "startvm", name, "--type", "headless"); err != nil {
+		return fmt.Errorf("encender VM %s: %w", name, err)
+	}
+	return nil
+}
+
+// ShutdownVM pide al sistema operativo de la VM que se apague de forma ordenada.
+// Vuelve de inmediato; el apagado termina segundos después.
+func (m *Manager) ShutdownVM(ctx context.Context, name string) error {
+	if err := m.exec(ctx, "controlvm", name, "acpipowerbutton"); err != nil {
+		return fmt.Errorf("apagar VM %s: %w", name, err)
+	}
+	return nil
+}
+
+// PowerOffVM apaga la VM de inmediato, como desconectarla.
+func (m *Manager) PowerOffVM(ctx context.Context, name string) error {
+	if err := m.exec(ctx, "controlvm", name, "poweroff"); err != nil {
+		return fmt.Errorf("forzar apagado de VM %s: %w", name, err)
+	}
+	return nil
+}
+
+// ResetVM reinicia la VM de inmediato.
+func (m *Manager) ResetVM(ctx context.Context, name string) error {
+	if err := m.exec(ctx, "controlvm", name, "reset"); err != nil {
+		return fmt.Errorf("reiniciar VM %s: %w", name, err)
+	}
+	return nil
+}
+
 // exec ejecuta VBoxManage y traduce el error de objeto inexistente a ErrVMNotFound.
 func (m *Manager) exec(ctx context.Context, args ...string) error {
 	out, err := m.run(ctx, args...)

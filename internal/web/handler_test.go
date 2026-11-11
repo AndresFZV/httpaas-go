@@ -3,6 +3,7 @@ package web
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -10,7 +11,9 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,7 +21,10 @@ import (
 	"github.com/AndresFZV/httpaas-go/internal/deployment"
 	"github.com/AndresFZV/httpaas-go/internal/health"
 	"github.com/AndresFZV/httpaas-go/internal/instance"
+	"github.com/AndresFZV/httpaas-go/internal/power"
 )
+
+const nsVM = "debian ns"
 
 type fakeDeployments struct {
 	snapshots map[string]deployment.Snapshot
@@ -28,6 +34,10 @@ type fakeDeployments struct {
 func (f fakeDeployments) Start(string, io.Reader, string) (string, error) { return "nuevo", nil }
 func (f fakeDeployments) Retry(string) (string, error)                    { return "", deployment.ErrNotRetryable }
 func (f fakeDeployments) ActiveHostnames() map[string]bool                { return f.active }
+
+func (f fakeDeployments) Publish(string, netip.Addr, io.Reader, string) (string, error) {
+	return "nuevo", nil
+}
 
 func (f fakeDeployments) Snapshot(id string) (deployment.Snapshot, error) {
 	snap, ok := f.snapshots[id]
@@ -40,8 +50,22 @@ func (f fakeDeployments) Snapshot(id string) (deployment.Snapshot, error) {
 type fakeMonitor struct{ snap health.Snapshot }
 
 func (f fakeMonitor) Snapshot() health.Snapshot { return f.snap }
-func (f fakeDeployments) Publish(string, netip.Addr, io.Reader, string) (string, error) {
-	return "nuevo", nil
+
+type fakePower struct {
+	mu      sync.Mutex
+	pending map[string]power.Pending
+	actions []string
+}
+
+func (f *fakePower) Do(_ context.Context, name string, action power.Action) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.actions = append(f.actions, name+" "+string(action))
+	return nil
+}
+
+func (f *fakePower) Pending() map[string]power.Pending {
+	return f.pending
 }
 
 func newFakeDeployments() fakeDeployments {
@@ -75,10 +99,12 @@ func healthySnapshot() health.Snapshot {
 			{Name: "VirtualBox", OK: true, Detail: "Versión 7.2.6"},
 		},
 		Instances: map[string]health.InstanceStatus{"paisajes": health.InstanceActive},
+		VMs:       map[string]bool{"paisajes": true, nsVM: true},
+		VMsKnown:  true,
 	}
 }
 
-func newTestServer(t *testing.T, snap health.Snapshot) *http.ServeMux {
+func newTestServerWith(t *testing.T, snap health.Snapshot, pw *fakePower) *http.ServeMux {
 	t.Helper()
 
 	first := netip.MustParseAddr("192.168.10.30")
@@ -94,11 +120,17 @@ func newTestServer(t *testing.T, snap health.Snapshot) *http.ServeMux {
 	h, err := NewHandler(Config{
 		Domain:       "cloud.local",
 		DNSServer:    "192.168.10.10",
+		NSVMName:     nsVM,
 		FirstIP:      first,
 		LastIP:       last,
 		TemplatesDir: filepath.Join("..", "..", "templates"),
 		StaticDir:    filepath.Join("..", "..", "static"),
-	}, store, nil, newFakeDeployments(), fakeMonitor{snap: snap})
+	}, Deps{
+		Store:       store,
+		Deployments: newFakeDeployments(),
+		Monitor:     fakeMonitor{snap: snap},
+		Power:       pw,
+	})
 	if err != nil {
 		t.Fatalf("NewHandler() error: %v", err)
 	}
@@ -108,11 +140,22 @@ func newTestServer(t *testing.T, snap health.Snapshot) *http.ServeMux {
 	return mux
 }
 
+func newTestServer(t *testing.T, snap health.Snapshot) *http.ServeMux {
+	return newTestServerWith(t, snap, &fakePower{})
+}
+
 func get(t *testing.T, mux *http.ServeMux, path string) (int, string) {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 	return rec.Code, rec.Body.String()
+}
+
+func post(t *testing.T, mux *http.ServeMux, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))
+	return rec
 }
 
 func assertPage(t *testing.T, mux *http.ServeMux, path string, wantStatus int, want ...string) {
@@ -140,7 +183,8 @@ func TestHealthyInfrastructure(t *testing.T) {
 	mux := newTestServer(t, healthySnapshot())
 
 	assertPage(t, mux, "/", http.StatusOK,
-		"Todos los sistemas operativos", "Operativa", "Plataforma operativa", "Activa", "100% responden por HTTP")
+		"Todos los sistemas operativos", "Operativa", "Plataforma operativa", "Activa", "100% responden por HTTP",
+		"/instances/paisajes/power/restart", "/instances/paisajes/power/stop")
 }
 
 func TestFailingInfrastructure(t *testing.T) {
@@ -151,13 +195,89 @@ func TestFailingInfrastructure(t *testing.T) {
 	mux := newTestServer(t, snap)
 
 	assertPage(t, mux, "/", http.StatusOK,
-		"Infraestructura con fallas", "Con fallas", "Plataforma con fallas", "Servidor DNS · Bind9", "Sin respuesta")
+		"Infraestructura con fallas", "Con fallas", "Plataforma con fallas", "Servidor DNS · Bind9", "Sin respuesta",
+		"/infrastructure/ns/power/restart")
+}
+
+func TestStoppedInstanceAndNS(t *testing.T) {
+	snap := healthySnapshot()
+	snap.Components[0].OK = false
+	snap.VMs = map[string]bool{}
+	snap.Instances["paisajes"] = health.InstanceUnreachable
+
+	mux := newTestServer(t, snap)
+
+	assertPage(t, mux, "/", http.StatusOK, "Apagada", "/instances/paisajes/power/start", "/infrastructure/ns/power/start")
+}
+
+func TestStartingTransitionUntilConfirmed(t *testing.T) {
+	snap := healthySnapshot()
+	pw := &fakePower{pending: map[string]power.Pending{
+		"paisajes": {Action: power.ActionStart, StartedAt: snap.CheckedAt},
+	}}
+
+	assertPage(t, newTestServerWith(t, snap, pw), "/instances", http.StatusOK, "Encendiendo")
+
+	snap.CheckedAt = snap.CheckedAt.Add(time.Minute)
+	assertPage(t, newTestServerWith(t, snap, pw), "/instances", http.StatusOK, "Activa")
 }
 
 func TestInstanceNotCheckedYet(t *testing.T) {
 	mux := newTestServer(t, health.Snapshot{})
 
 	assertPage(t, mux, "/instances", http.StatusOK, "Verificando")
+}
+
+func TestPowerActionRedirects(t *testing.T) {
+	pw := &fakePower{}
+	rec := post(t, newTestServerWith(t, healthySnapshot(), pw), "/instances/paisajes/power/restart")
+
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/instances?restart=paisajes" {
+		t.Errorf("estado = %d, Location = %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if !slices.Equal(pw.actions, []string{"paisajes restart"}) {
+		t.Errorf("acciones = %v", pw.actions)
+	}
+}
+
+func TestPowerRejectsUnknownAction(t *testing.T) {
+	rec := post(t, newTestServer(t, healthySnapshot()), "/instances/paisajes/power/borrar")
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("estado = %d, se esperaba 400", rec.Code)
+	}
+}
+
+func TestNSPowerDoesNotAllowStop(t *testing.T) {
+	pw := &fakePower{}
+	rec := post(t, newTestServerWith(t, healthySnapshot(), pw), "/infrastructure/ns/power/stop")
+
+	if rec.Code != http.StatusBadRequest || len(pw.actions) != 0 {
+		t.Errorf("estado = %d, acciones = %v", rec.Code, pw.actions)
+	}
+}
+
+func TestNSPowerStartsConfiguredVM(t *testing.T) {
+	pw := &fakePower{}
+	rec := post(t, newTestServerWith(t, healthySnapshot(), pw), "/infrastructure/ns/power/start")
+
+	if rec.Code != http.StatusSeeOther || !slices.Equal(pw.actions, []string{nsVM + " start"}) {
+		t.Errorf("estado = %d, acciones = %v", rec.Code, pw.actions)
+	}
+}
+
+func TestStatusAPI(t *testing.T) {
+	status, body := get(t, newTestServer(t, healthySnapshot()), "/api/status")
+	if status != http.StatusOK {
+		t.Fatalf("estado = %d, se esperaba 200", status)
+	}
+
+	var resp statusResponse
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		t.Fatalf("respuesta no es JSON válido: %v", err)
+	}
+	if resp.Instances["paisajes"] != statusActive || resp.Health != "ok" || resp.NS != nsRunning {
+		t.Errorf("respuesta = %+v", resp)
+	}
 }
 
 func TestDeploymentPagesRender(t *testing.T) {
@@ -208,6 +328,9 @@ func TestFlashMessages(t *testing.T) {
 		{"/instances?created=paisajes&published=1", "Instancia paisajes creada y contenido publicado"},
 		{"/instances?deleted=negocios", "Instancia negocios eliminada"},
 		{"/instances?publish_failed=paisajes", "no se pudo publicar el contenido"},
+		{"/instances?start=paisajes", "Encendiendo paisajes"},
+		{"/instances?stop=paisajes", "Apagando paisajes"},
+		{"/?ns=start", "Encendiendo el servidor DNS"},
 	}
 
 	for _, tt := range tests {
@@ -221,25 +344,6 @@ func TestFlashMessagesIgnoreInvalidHostname(t *testing.T) {
 	_, body := get(t, newTestServer(t, healthySnapshot()), "/instances?created=%3Cscript%3E")
 	if strings.Contains(body, "creada") {
 		t.Error("se mostró un aviso con un hostname inválido")
-	}
-}
-
-func TestTemplateHelpers(t *testing.T) {
-	if got := displayName("paisajes"); got != "Paisajes" {
-		t.Errorf("displayName() = %q", got)
-	}
-	date := time.Date(2026, time.November, 11, 0, 12, 0, 0, time.Local)
-	if got := formatDate(date); got != "11 nov 2026, 00:12" {
-		t.Errorf("formatDate() = %q", got)
-	}
-	if got := icon("server\"><script>", 18); got != "" {
-		t.Errorf("icon() con nombre inválido = %q, se esperaba vacío", got)
-	}
-	if got := ipCount(netip.MustParseAddr("192.168.10.30"), netip.MustParseAddr("192.168.10.254")); got != 225 {
-		t.Errorf("ipCount() = %d, se esperaba 225", got)
-	}
-	if got := ago(time.Now().Add(-5 * time.Minute)); got != "hace 5 minutos" {
-		t.Errorf("ago() = %q", got)
 	}
 }
 
@@ -305,5 +409,24 @@ func TestPublishUnknownInstance(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("estado = %d, se esperaba 404", rec.Code)
+	}
+}
+
+func TestTemplateHelpers(t *testing.T) {
+	if got := displayName("paisajes"); got != "Paisajes" {
+		t.Errorf("displayName() = %q", got)
+	}
+	date := time.Date(2026, time.November, 11, 0, 12, 0, 0, time.Local)
+	if got := formatDate(date); got != "11 nov 2026, 00:12" {
+		t.Errorf("formatDate() = %q", got)
+	}
+	if got := icon("server\"><script>", 18); got != "" {
+		t.Errorf("icon() con nombre inválido = %q, se esperaba vacío", got)
+	}
+	if got := ipCount(netip.MustParseAddr("192.168.10.30"), netip.MustParseAddr("192.168.10.254")); got != 225 {
+		t.Errorf("ipCount() = %d, se esperaba 225", got)
+	}
+	if got := ago(time.Now().Add(-5 * time.Minute)); got != "hace 5 minutos" {
+		t.Errorf("ago() = %q", got)
 	}
 }

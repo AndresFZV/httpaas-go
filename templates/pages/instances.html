@@ -13,7 +13,7 @@
             <span>{{len .Instances}}</span>
             <div>
                 <strong>Instancias</strong>
-                <small>en tu infraestructura</small>
+                <small>{{.Stats.Active}} activas en tu infraestructura</small>
             </div>
         </div>
         {{if .Instances}}
@@ -22,6 +22,16 @@
                 {{icon "search" 18}}
                 <input type="search" placeholder="Buscar por hostname..." aria-label="Buscar por hostname" data-search>
                 <button type="button" data-search-clear hidden aria-label="Limpiar búsqueda">{{icon "x" 15}}</button>
+            </label>
+            <label class="filter-button">
+                {{icon "filter" 17}}
+                <select data-status-filter aria-label="Filtrar por estado">
+                    <option value="">Todas</option>
+                    <option value="active">Activas</option>
+                    <option value="unreachable">Sin respuesta</option>
+                    <option value="stopped">Apagadas</option>
+                    <option value="creating">Creando</option>
+                </select>
             </label>
         </div>
         {{end}}
@@ -34,8 +44,8 @@
         <div class="empty-state" data-search-empty hidden>
             <div>{{icon "search" 24}}</div>
             <h3>No encontramos instancias</h3>
-            <p>Prueba con otro nombre o limpia la búsqueda.</p>
-            <button type="button" class="secondary-button" data-search-clear>Limpiar búsqueda</button>
+            <p>Prueba con otro nombre u otro estado, o limpia los filtros.</p>
+            <button type="button" class="secondary-button" data-search-clear>Limpiar filtros</button>
         </div>
     {{else}}
         <div class="empty-state">

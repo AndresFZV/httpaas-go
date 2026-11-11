@@ -129,3 +129,44 @@ func TestVersionReturnsTrimmedOutput(t *testing.T) {
 		t.Errorf("Version() = %q", version)
 	}
 }
+
+func TestRunningVMsParsesNamesWithSpaces(t *testing.T) {
+	m := &Manager{run: func(context.Context, ...string) ([]byte, error) {
+		return []byte("\"debian ns\" {fb289a7c-9461-42a6-a186-6c91e0f2d3c7}\r\n" +
+			"\"paisajes\" {f3976f6d-79a8-4f92-92f7-e8389d7d8f53}\r\n"), nil
+	}}
+
+	running, err := m.RunningVMs(context.Background())
+	if err != nil {
+		t.Fatalf("RunningVMs() error: %v", err)
+	}
+	if len(running) != 2 || !running["debian ns"] || !running["paisajes"] {
+		t.Errorf("RunningVMs() = %v", running)
+	}
+}
+
+func TestPowerCommandsUseExpectedArguments(t *testing.T) {
+	var got [][]string
+	m := &Manager{run: func(_ context.Context, args ...string) ([]byte, error) {
+		got = append(got, args)
+		return nil, nil
+	}}
+	ctx := context.Background()
+
+	_ = m.StartVM(ctx, "paisajes")
+	_ = m.ShutdownVM(ctx, "paisajes")
+	_ = m.PowerOffVM(ctx, "paisajes")
+	_ = m.ResetVM(ctx, "paisajes")
+
+	want := [][]string{
+		{"startvm", "paisajes", "--type", "headless"},
+		{"controlvm", "paisajes", "acpipowerbutton"},
+		{"controlvm", "paisajes", "poweroff"},
+		{"controlvm", "paisajes", "reset"},
+	}
+	for i := range want {
+		if !slices.Equal(got[i], want[i]) {
+			t.Errorf("comando %d = %v, se esperaba %v", i, got[i], want[i])
+		}
+	}
+}

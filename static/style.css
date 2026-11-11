@@ -435,3 +435,17 @@ dialog.modal::backdrop { background: rgba(15,23,42,.55); backdrop-filter: blur(3
 .publish-file.has-file { border-style: solid; border-color: #bfdbfe; color: #1d4ed8; background: #f8fbff; }
 .publish-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .publish-error { margin-top: 10px; color: #b91c1c; font-size: 10px; }
+
+/* Control de encendido */
+.status-badge.stopped { border-color: #e2e8f0; color: #475569; background: #f1f5f9; }
+.status-badge.stopped i { background: #64748b; }
+.status-badge.starting, .status-badge.stopping, .status-badge.restarting { border-color: #bfdbfe; color: #1d4ed8; background: #eff6ff; }
+.status-badge.starting i, .status-badge.stopping i, .status-badge.restarting i { background: #3b82f6; animation: pulse 1.1s ease infinite; }
+.inline-form { display: inline-flex; }
+.icon-button.success:hover { color: #15803d; background: #f0fdf4; }
+.mobile-instance-actions { flex-wrap: wrap; gap: 10px 16px; }
+.mobile-instance-actions form > button { display: flex; align-items: center; gap: 5px; color: #2563eb; font-size: 9px; font-weight: 600; }
+.mobile-instance-actions form > button.danger-text { color: #dc2626; }
+.platform-strip form { margin-left: 12px; }
+.platform-strip .primary-button, .platform-strip .secondary-button { min-height: 32px; white-space: nowrap; }
+.platform-strip .live-config { margin-left: 12px; white-space: nowrap; }

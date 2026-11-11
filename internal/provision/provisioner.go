@@ -34,7 +34,6 @@ type DNSUpdater interface {
 // Config son los parámetros del aprovisionamiento.
 type Config struct {
 	TemplateIP   netip.Addr    // IP con la que arranca toda VM clonada de la plantilla
-	Interface    string        // interfaz de red de la plantilla, por ejemplo enp0s3
 	BootTimeout  time.Duration // tiempo máximo para que la VM responda por SSH
 	PollInterval time.Duration // espera entre intentos de conexión SSH
 }
@@ -104,8 +103,8 @@ func (p *Provisioner) createAndConfigure(ctx context.Context, inst instance.Inst
 		return true, fmt.Errorf("la VM %s no respondió en la IP temporal: %w", inst.Hostname, err)
 	}
 
-	script := configureScript(inst.Hostname, inst.IP, p.cfg.Interface)
-	if err := p.ssh.Run(ctx, p.cfg.TemplateIP.String(), script); err != nil {
+	// El script de la plantilla reinicia la VM a los 3 segundos; el comando termina antes.
+	if err := p.ssh.Run(ctx, p.cfg.TemplateIP.String(), configureCommand(inst.Hostname, inst.IP)); err != nil {
 		return true, fmt.Errorf("configurar hostname e IP de %s: %w", inst.Hostname, err)
 	}
 

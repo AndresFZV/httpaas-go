@@ -50,7 +50,8 @@ func NewManager(cfg Config) *Manager {
 	return m
 }
 
-// CreateVM crea una VM con el disco multiconexión y la red host-only, y la inicia sin interfaz gráfica.
+// CreateVM crea una VM con el disco multiconexión, NAT en el adaptador 1 y la red host-only en el 2,
+// y la inicia sin interfaz gráfica.
 // Si falla después de registrarla, intenta borrarla para no dejar VMs a medio crear.
 func (m *Manager) CreateVM(ctx context.Context, name string) error {
 	steps := [][]string{
@@ -58,8 +59,9 @@ func (m *Manager) CreateVM(ctx context.Context, name string) error {
 		{"modifyvm", name,
 			"--memory", strconv.Itoa(m.cfg.MemoryMB),
 			"--cpus", strconv.Itoa(m.cfg.CPUs),
-			"--nic1", "hostonly",
-			"--hostonlyadapter1", m.cfg.HostOnlyIF},
+			"--nic1", "nat",
+			"--nic2", "hostonly",
+			"--hostonlyadapter2", m.cfg.HostOnlyIF},
 		{"storagectl", name, "--name", storageController, "--add", "sata", "--controller", "IntelAhci"},
 		{"storageattach", name, "--storagectl", storageController,
 			"--port", "0", "--device", "0", "--type", "hdd", "--medium", m.cfg.TemplateDisk},

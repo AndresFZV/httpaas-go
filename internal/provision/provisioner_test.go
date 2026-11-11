@@ -80,7 +80,6 @@ func newTestProvisioner(t *testing.T, dns *fakeDNS) (*Provisioner, *instance.Sto
 	ssh := &fakeSSH{}
 	cfg := Config{
 		TemplateIP:   netip.MustParseAddr("192.168.10.20"),
-		Interface:    "enp0s3",
 		BootTimeout:  time.Second,
 		PollInterval: time.Millisecond,
 	}
@@ -108,8 +107,8 @@ func TestProvisionRunsAllSteps(t *testing.T) {
 	if !slices.Equal(ssh.ranOn, []string{"192.168.10.20"}) {
 		t.Errorf("script ejecutado en %v, se esperaba la IP temporal", ssh.ranOn)
 	}
-	if !strings.Contains(ssh.lastRun, "address 192.168.10.30/24") {
-		t.Errorf("el script no asigna la IP final:\n%s", ssh.lastRun)
+	if want := "sudo -n /usr/local/bin/configurar-instancia.sh paisajes 192.168.10.30"; !strings.Contains(ssh.lastRun, want) {
+		t.Errorf("comando de configuración = %q, se esperaba %q", ssh.lastRun, want)
 	}
 	if !slices.Equal(dns.added, []string{"paisajes"}) {
 		t.Errorf("registros DNS = %v", dns.added)

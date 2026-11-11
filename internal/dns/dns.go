@@ -12,17 +12,20 @@ type Runner interface {
 }
 
 // Updater administra registros A de la zona en Bind9.
-// Ejecuta nsupdate -l por SSH en el servidor DNS, que usa la llave de sesión local de Bind9.
+// Ejecuta nsupdate por SSH en el servidor DNS con la clave TSIG que vive en ese servidor,
+// así la clave nunca sale de ns.
 type Updater struct {
-	runner Runner
-	server string
-	zone   string
-	ttl    int
+	runner  Runner
+	server  string
+	zone    string
+	keyFile string
+	ttl     int
 }
 
-// NewUpdater crea un Updater para la zona zone en el servidor DNS server.
-func NewUpdater(runner Runner, server, zone string, ttl int) *Updater {
-	return &Updater{runner: runner, server: server, zone: zone, ttl: ttl}
+// NewUpdater crea un Updater para la zona zone en el servidor DNS server,
+// usando la clave TSIG keyFile que está en ese servidor.
+func NewUpdater(runner Runner, server, zone, keyFile string, ttl int) *Updater {
+	return &Updater{runner: runner, server: server, zone: zone, keyFile: keyFile, ttl: ttl}
 }
 
 // AddRecord crea o reemplaza el registro A de hostname apuntando a ip.
@@ -48,8 +51,12 @@ func (u *Updater) DeleteRecord(ctx context.Context, hostname string) error {
 }
 
 // script arma el script de bash que pasa los comandos a nsupdate.
+// El usuario deploy solo tiene sudo para nsupdate; -n evita que sudo pida contraseña.
 func (u *Updater) script(commands string) string {
-	return fmt.Sprintf("sudo nsupdate -l <<'EOF'\nzone %s.\n%ssend\nEOF\n", u.zone, commands)
+	return fmt.Sprintf(
+		"sudo -n nsupdate -k %s <<'EOF'\nserver %s\nzone %s\n%ssend\nquit\nEOF\n",
+		u.keyFile, u.server, u.zone, commands,
+	)
 }
 
 func (u *Updater) fqdn(hostname string) string {

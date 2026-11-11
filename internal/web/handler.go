@@ -41,6 +41,7 @@ type Deployments interface {
 	Retry(id string) (string, error)
 	Snapshot(id string) (deployment.Snapshot, error)
 	ActiveHostnames() map[string]bool
+	Publish(hostname string, ip netip.Addr, archive io.Reader, archiveName string) (string, error)
 }
 
 // HealthMonitor entrega el resultado de la última verificación de la infraestructura.
@@ -98,6 +99,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /deployments/{id}/retry", h.retryDeployment)
 	mux.HandleFunc("GET /api/deployments/{id}", h.deploymentStatus)
 	mux.HandleFunc("POST /instances/{hostname}/delete", h.deleteInstance)
+	mux.HandleFunc("POST /instances/{hostname}/publish", h.publishInstance)
 }
 
 // stats son los números de las tarjetas del dashboard.

@@ -5,11 +5,13 @@ import (
 	"errors"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"time"
 
 	"github.com/AndresFZV/httpaas-go/internal/deploy"
+	"github.com/AndresFZV/httpaas-go/internal/deployment"
 	"github.com/AndresFZV/httpaas-go/internal/instance"
 )
 
@@ -66,14 +68,8 @@ func (h *Handler) deploy(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case err == nil:
 		defer file.Close()
-		if err := deploy.ValidateArchive(file, header.Size, header.Filename); err != nil {
+		if err := validateUpload(file, header); err != nil {
 			h.renderDeployError(w, r, hostname, err)
-			return
-		}
-		// La validación leyó el archivo; se vuelve al inicio antes de guardarlo.
-		if _, err := file.Seek(0, io.SeekStart); err != nil {
-			log.Printf("reiniciar lectura del archivo: %v", err)
-			h.renderDeployError(w, r, hostname, errInvalidForm)
 			return
 		}
 		archive = file
@@ -95,24 +91,97 @@ func (h *Handler) deploy(w http.ResponseWriter, r *http.Request) {
 	redirectTo(w, r, "/deployments/"+url.PathEscape(id))
 }
 
+// publishInstance publica un .zip en una instancia existente y redirige a la página de progreso.
+func (h *Handler) publishInstance(w http.ResponseWriter, r *http.Request) {
+	hostname := instance.NormalizeHostname(r.PathValue("hostname"))
+
+	inst, err := h.store.Get(hostname)
+	if err != nil {
+		h.renderInstancesError(w, r, err)
+		return
+	}
+	if err := parseRequestForm(w, r); err != nil {
+		h.renderInstancesError(w, r, err)
+		return
+	}
+
+	file, header, err := r.FormFile("content")
+	if errors.Is(err, http.ErrMissingFile) {
+		h.renderInstancesError(w, r, deploy.ErrArchiveMissing)
+		return
+	}
+	if err != nil {
+		log.Printf("leer archivo del formulario: %v", err)
+		h.renderInstancesError(w, r, errInvalidForm)
+		return
+	}
+	defer file.Close()
+
+	if err := validateUpload(file, header); err != nil {
+		h.renderInstancesError(w, r, err)
+		return
+	}
+
+	id, err := h.deployments.Publish(hostname, inst.IP, file, header.Filename)
+	if err != nil {
+		if !errors.Is(err, deployment.ErrBusy) {
+			log.Printf("iniciar publicación en %s: %v", hostname, err)
+			err = errStartFailed
+		}
+		h.renderInstancesError(w, r, err)
+		return
+	}
+	log.Printf("publicación %s iniciada en %s", id, hostname)
+
+	redirectTo(w, r, "/deployments/"+url.PathEscape(id))
+}
+
 // deleteInstance borra la VM, su registro DNS y la instancia del registro.
 func (h *Handler) deleteInstance(w http.ResponseWriter, r *http.Request) {
 	hostname := instance.NormalizeHostname(r.PathValue("hostname"))
+
+	if h.deployments.ActiveHostnames()[hostname] {
+		h.renderInstancesError(w, r, deployment.ErrBusy)
+		return
+	}
 
 	ctx, cancel := backgroundContext(r, deleteTimeout)
 	defer cancel()
 
 	if err := h.provisioner.Delete(ctx, hostname); err != nil {
-		err = infrastructureError(err, errDeleteFailed, "eliminar "+hostname)
-		status, _ := statusFor(err)
-		data := h.newPage(r, "instances", "Instancias")
-		data.Error = err.Error()
-		h.render(w, status, data)
+		h.renderInstancesError(w, r, infrastructureError(err, errDeleteFailed, "eliminar "+hostname))
 		return
 	}
 	log.Printf("instancia eliminada: %s", hostname)
 
 	redirectTo(w, r, "/instances?deleted="+url.QueryEscape(hostname))
+}
+
+// validateUpload valida el .zip recibido y deja el archivo listo para leerse desde el inicio.
+func validateUpload(file multipart.File, header *multipart.FileHeader) error {
+	if err := deploy.ValidateArchive(file, header.Size, header.Filename); err != nil {
+		return err
+	}
+	// La validación leyó el archivo; se vuelve al inicio antes de guardarlo.
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		log.Printf("reiniciar lectura del archivo: %v", err)
+		return errInvalidForm
+	}
+	return nil
+}
+
+// renderInstancesError muestra la página de instancias con el error arriba.
+func (h *Handler) renderInstancesError(w http.ResponseWriter, r *http.Request, err error) {
+	status, known := statusFor(err)
+	message := err.Error()
+	if !known {
+		log.Printf("error inesperado: %v", err)
+		message = "Ocurrió un error interno; revise el log del servidor"
+	}
+
+	data := h.newPage(r, "instances", "Instancias")
+	data.Error = message
+	h.render(w, status, data)
 }
 
 // renderDeployError vuelve a mostrar el formulario con el error y el nombre que había escrito el usuario.
@@ -154,7 +223,7 @@ func statusFor(err error) (status int, known bool) {
 		return http.StatusRequestEntityTooLarge, true
 	case errors.Is(err, errInvalidForm):
 		return http.StatusBadRequest, true
-	case errors.Is(err, instance.ErrHostnameTaken):
+	case errors.Is(err, instance.ErrHostnameTaken), errors.Is(err, deployment.ErrBusy):
 		return http.StatusConflict, true
 	case errors.Is(err, instance.ErrNotFound):
 		return http.StatusNotFound, true

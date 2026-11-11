@@ -32,7 +32,7 @@
                     <small>Servidor Apache · Debian 13</small>
                 </div>
             </div>
-            <span class="status-badge"><i></i> Activa</span>
+            <span class="status-badge active"><i></i> Activa</span>
         </div>
         <div class="success-details">
             <div><span>HOSTNAME</span><strong>{{.FQDN}}</strong></div>
@@ -117,9 +117,15 @@
             <div class="orbit orbit-two"></div>
             <div class="process-server">{{icon "server" 27}}</div>
         </div>
-        <p>DESPLIEGUE EN PROGRESO</p>
-        <h1>Estamos preparando tu aplicación</h1>
-        <span>Puede tardar unos 3 minutos. Si cierras esta ventana, el despliegue continúa y la instancia aparecerá en el listado.</span>
+        {{if .Republish}}
+            <p>PUBLICACIÓN EN PROGRESO</p>
+            <h1>Publicando tu contenido</h1>
+            <span>Solo tarda unos segundos: la instancia ya existe.</span>
+        {{else}}
+            <p>DESPLIEGUE EN PROGRESO</p>
+            <h1>Estamos preparando tu aplicación</h1>
+            <span>Puede tardar unos 3 minutos. Si cierras esta ventana, el despliegue continúa y la instancia aparecerá en el listado.</span>
+        {{end}}
     </div>
 
     <section class="panel progress-card">

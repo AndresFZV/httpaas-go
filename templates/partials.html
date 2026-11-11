@@ -30,6 +30,10 @@
                 <td>
                     <div class="row-actions">
                         <a class="icon-button" href="{{.URL}}" target="_blank" rel="noopener" title="Abrir aplicación">{{icon "external" 17}}</a>
+                        {{if ne .Status "creating"}}
+                        <button type="button" class="icon-button" title="Publicar contenido"
+                                data-publish data-hostname="{{.Hostname}}" data-fqdn="{{.FQDN}}">{{icon "upload" 17}}</button>
+                        {{end}}
                         <button type="button" class="icon-button" data-copy="{{.URL}}" title="Copiar URL">{{icon "copy" 17}}</button>
                         <button type="button" class="icon-button danger" title="Eliminar instancia"
                                 data-delete data-hostname="{{.Hostname}}" data-name="{{displayName .Hostname}}"
@@ -61,6 +65,9 @@
         </div>
         <div class="mobile-instance-actions">
             <a href="{{.URL}}" target="_blank" rel="noopener">{{icon "external" 16}} Abrir</a>
+            {{if ne .Status "creating"}}
+            <button type="button" data-publish data-hostname="{{.Hostname}}" data-fqdn="{{.FQDN}}">{{icon "upload" 16}} Publicar</button>
+            {{end}}
             <button type="button" data-copy="{{.URL}}">{{icon "copy" 16}} Copiar</button>
             <button type="button" class="danger-text"
                     data-delete data-hostname="{{.Hostname}}" data-name="{{displayName .Hostname}}"
@@ -90,6 +97,26 @@
         <div class="modal-actions">
             <button type="button" class="secondary-button" data-dialog-cancel>Cancelar</button>
             <button type="submit" class="danger-button">{{icon "trash" 16}} <span data-label>Eliminar instancia</span></button>
+        </div>
+    </form>
+</dialog>
+{{end}}
+
+{{define "publish-dialog"}}
+<dialog class="modal" data-publish-dialog aria-labelledby="publish-title">
+    <div class="modal-publish-icon">{{icon "upload" 22}}</div>
+    <h2 id="publish-title">Publicar en <span data-field="fqdn"></span></h2>
+    <p>El contenido actual de la instancia se reemplaza por el del archivo. El .zip debe tener un <strong>index.html</strong> en su raíz.</p>
+    <form method="post" enctype="multipart/form-data" data-max-size="{{.MaxUploadBytes}}">
+        <label class="publish-file" data-publish-drop>
+            {{icon "file" 20}}
+            <span data-publish-file-name>Seleccionar o arrastrar archivo ZIP</span>
+            <input type="file" name="content" accept=".zip,application/zip" class="sr-only">
+        </label>
+        <p class="publish-error" role="alert" data-publish-error hidden></p>
+        <div class="modal-actions">
+            <button type="button" class="secondary-button" data-dialog-cancel>Cancelar</button>
+            <button type="submit" class="primary-button">{{icon "upload" 16}} <span data-label>Publicar</span></button>
         </div>
     </form>
 </dialog>

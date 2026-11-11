@@ -237,3 +237,48 @@ func TestActiveHostnamesWhileRunning(t *testing.T) {
 		t.Errorf("ActiveHostnames() = %v, paisajes ya terminó", active)
 	}
 }
+
+func TestPublishOnlyRunsPublishAndVerify(t *testing.T) {
+	p, d, v := &fakeProvisioner{}, &fakeDeployer{}, &fakeVerifier{}
+	m, dir := newTestManager(t, p, d, v)
+
+	id, err := m.Publish("paisajes", netip.MustParseAddr("192.168.10.30"), strings.NewReader("zip nuevo"), "nuevo.zip")
+	if err != nil {
+		t.Fatalf("Publish() error: %v", err)
+	}
+	snap := waitFinished(t, m, id)
+
+	if snap.Status != StatusSucceeded || !snap.Republish {
+		t.Errorf("estado = %s, republicación = %v", snap.Status, snap.Republish)
+	}
+	if p.calls != 0 {
+		t.Errorf("aprovisionamientos = %d, publicar no debía crear una VM", p.calls)
+	}
+	if d.received != "zip nuevo" || v.calls != 1 {
+		t.Errorf("contenido publicado = %q, verificaciones = %d", d.received, v.calls)
+	}
+	if n := uploadsLeft(t, dir); n != 0 {
+		t.Errorf("quedaron %d archivos subidos", n)
+	}
+}
+
+func TestPublishRejectsBusyInstance(t *testing.T) {
+	p := &blockingProvisioner{release: make(chan struct{})}
+	dir := t.TempDir()
+	m, err := NewManager(dir, p, &fakeDeployer{}, &fakeVerifier{})
+	if err != nil {
+		t.Fatalf("NewManager() error: %v", err)
+	}
+
+	id, _ := m.Start("paisajes", nil, "")
+	_, err = m.Publish("paisajes", netip.MustParseAddr("192.168.10.30"), strings.NewReader("zip"), "sitio.zip")
+	if !errors.Is(err, ErrBusy) {
+		t.Errorf("Publish() durante un despliegue = %v, se esperaba %v", err, ErrBusy)
+	}
+
+	close(p.release)
+	waitFinished(t, m, id)
+	if n := uploadsLeft(t, dir); n != 0 {
+		t.Errorf("el archivo rechazado no se borró: quedaron %d", n)
+	}
+}

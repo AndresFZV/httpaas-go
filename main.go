@@ -47,7 +47,7 @@ func main() {
 	})
 
 	ssh := remote.NewClient(remote.Config{
-		SSHPath:        "ssh",
+		SSHPath:        cfg.SSHPath,
 		User:           cfg.SSHUser,
 		KeyFile:        cfg.SSHKey,
 		ConnectTimeout: sshConnectTimeout,

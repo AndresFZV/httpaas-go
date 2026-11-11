@@ -23,6 +23,7 @@ var (
 	ErrNotFound       = errors.New("el despliegue no existe")
 	ErrNotRetryable   = errors.New("solo se puede reintentar un despliegue que falló")
 	ErrAlreadyRetried = errors.New("este despliegue ya se reintentó")
+	ErrBusy           = errors.New("la instancia tiene un despliegue en curso; espera a que termine")
 )
 
 // errorsForUser son errores cuyo texto se le muestra tal cual al usuario.
@@ -73,6 +74,7 @@ type Snapshot struct {
 	HasContent  bool   `json:"hasContent"`
 	ArchiveName string `json:"archiveName"`
 	Percent     int    `json:"percent"`
+	Republish   bool   `json:"republish"`
 }
 
 type job struct {
@@ -86,6 +88,7 @@ type job struct {
 	failedStep  int
 	errMsg      string
 	ip          netip.Addr
+	republish   bool // publicación en una instancia existente
 }
 
 // Manager ejecuta despliegues en segundo plano y guarda su estado en memoria.
@@ -142,6 +145,42 @@ func (m *Manager) Start(hostname string, archive io.Reader, archiveName string) 
 	return j.id, nil
 }
 
+// Publish lanza en segundo plano la publicación de un .zip en una instancia que ya existe.
+// Empieza en la etapa de publicación, porque las anteriores ya se hicieron al crear la instancia.
+func (m *Manager) Publish(hostname string, ip netip.Addr, archive io.Reader, archiveName string) (string, error) {
+	path, err := m.saveArchive(archive)
+	if err != nil {
+		return "", err
+	}
+
+	m.mu.Lock()
+	for _, existing := range m.jobs {
+		if existing.hostname == hostname && existing.status == StatusRunning {
+			m.mu.Unlock()
+			os.Remove(path)
+			return "", ErrBusy
+		}
+	}
+
+	j := &job{
+		id:          newID(),
+		hostname:    hostname,
+		archivePath: path,
+		archiveName: archiveName,
+		hasContent:  true,
+		republish:   true,
+		status:      StatusRunning,
+		step:        StepPublish,
+		failedStep:  -1,
+		ip:          ip,
+	}
+	m.jobs[j.id] = j
+	m.mu.Unlock()
+
+	go m.run(j, StepPublish)
+	return j.id, nil
+}
+
 // Retry lanza de nuevo un despliegue fallido con el mismo nombre y el mismo .zip.
 // Si la instancia ya se había creado, solo repite la publicación y la verificación.
 func (m *Manager) Retry(id string) (string, error) {
@@ -176,6 +215,7 @@ func (m *Manager) Retry(id string) (string, error) {
 		step:        from,
 		failedStep:  -1,
 		ip:          old.ip,
+		republish:   old.republish,
 	}
 	old.archivePath = "" // el archivo pasa a ser del nuevo despliegue
 	m.jobs[j.id] = j
@@ -208,6 +248,7 @@ func (m *Manager) Snapshot(id string) (Snapshot, error) {
 		HasContent:  j.hasContent,
 		ArchiveName: j.archiveName,
 		Percent:     j.step * 100 / len(Steps),
+		Republish:   j.republish,
 	}
 	if j.ip.IsValid() {
 		snap.IP = j.ip.String()

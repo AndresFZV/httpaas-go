@@ -1,8 +1,11 @@
 package web
 
 import (
+	"archive/zip"
+	"bytes"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -11,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndresFZV/httpaas-go/internal/deploy"
 	"github.com/AndresFZV/httpaas-go/internal/deployment"
 	"github.com/AndresFZV/httpaas-go/internal/health"
 	"github.com/AndresFZV/httpaas-go/internal/instance"
@@ -36,6 +40,9 @@ func (f fakeDeployments) Snapshot(id string) (deployment.Snapshot, error) {
 type fakeMonitor struct{ snap health.Snapshot }
 
 func (f fakeMonitor) Snapshot() health.Snapshot { return f.snap }
+func (f fakeDeployments) Publish(string, netip.Addr, io.Reader, string) (string, error) {
+	return "nuevo", nil
+}
 
 func newFakeDeployments() fakeDeployments {
 	base := deployment.Snapshot{
@@ -233,5 +240,70 @@ func TestTemplateHelpers(t *testing.T) {
 	}
 	if got := ago(time.Now().Add(-5 * time.Minute)); got != "hace 5 minutos" {
 		t.Errorf("ago() = %q", got)
+	}
+}
+
+// postArchive envía un formulario multipart a path; si fileName está vacío, no adjunta archivo.
+func postArchive(t *testing.T, mux *http.ServeMux, path, fileName string, content []byte) *httptest.ResponseRecorder {
+	t.Helper()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if fileName != "" {
+		part, err := writer.CreateFormFile("content", fileName)
+		if err != nil {
+			t.Fatalf("CreateFormFile() error: %v", err)
+		}
+		part.Write(content)
+	}
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, path, &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func validZip(t *testing.T) []byte {
+	t.Helper()
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	file, err := zw.Create("index.html")
+	if err != nil {
+		t.Fatalf("crear entrada: %v", err)
+	}
+	file.Write([]byte("<h1>Hola</h1>"))
+	if err := zw.Close(); err != nil {
+		t.Fatalf("cerrar zip: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func TestPublishRedirectsToProgress(t *testing.T) {
+	rec := postArchive(t, newTestServer(t, healthySnapshot()), "/instances/paisajes/publish", "sitio.zip", validZip(t))
+
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/deployments/nuevo" {
+		t.Errorf("estado = %d, Location = %q", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+func TestPublishRequiresArchive(t *testing.T) {
+	rec := postArchive(t, newTestServer(t, healthySnapshot()), "/instances/paisajes/publish", "", nil)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("estado = %d, se esperaba 422", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), deploy.ErrArchiveMissing.Error()) {
+		t.Error("la página no muestra el error de archivo faltante")
+	}
+}
+
+func TestPublishUnknownInstance(t *testing.T) {
+	rec := postArchive(t, newTestServer(t, healthySnapshot()), "/instances/otra/publish", "sitio.zip", validZip(t))
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("estado = %d, se esperaba 404", rec.Code)
 	}
 }

@@ -77,6 +77,97 @@
     });
   }
 
+    // Modal para publicar contenido en una instancia existente.
+  const publishDialog = document.querySelector("[data-publish-dialog]");
+  if (publishDialog) {
+    const form = publishDialog.querySelector("form");
+    const fileInput = form.querySelector("[name=content]");
+    const drop = form.querySelector("[data-publish-drop]");
+    const fileName = form.querySelector("[data-publish-file-name]");
+    const errorBox = form.querySelector("[data-publish-error]");
+    const submit = form.querySelector("[type=submit]");
+    const submitLabel = submit.querySelector("[data-label]");
+    const maxSize = Number(form.dataset.maxSize);
+    const placeholder = fileName.textContent;
+
+    function showPublishError(message) {
+      errorBox.textContent = message;
+      errorBox.hidden = message === "";
+    }
+
+    function resetPublish() {
+      fileInput.value = "";
+      fileName.textContent = placeholder;
+      drop.classList.remove("has-file", "dragging");
+      showPublishError("");
+      submit.disabled = false;
+      submitLabel.textContent = "Publicar";
+    }
+
+    function setPublishFile(file) {
+      if (!file) return;
+
+      let message = "";
+      if (!file.name.toLowerCase().endsWith(".zip")) message = "El archivo debe estar en formato ZIP.";
+      else if (file.size > maxSize) message = "El archivo supera el tamaño máximo de 50 MB.";
+
+      if (message) {
+        resetPublish();
+        showPublishError(message);
+        return;
+      }
+
+      // Al arrastrar, el archivo se asigna al input para que viaje con el formulario.
+      if (fileInput.files[0] !== file) {
+        const transfer = new DataTransfer();
+        transfer.items.add(file);
+        fileInput.files = transfer.files;
+      }
+      fileName.textContent = file.name;
+      drop.classList.add("has-file");
+      showPublishError("");
+    }
+
+    document.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-publish]");
+      if (!button) return;
+
+      resetPublish();
+      publishDialog.querySelectorAll("[data-field]").forEach((element) => {
+        element.textContent = button.dataset[element.dataset.field] ?? "";
+      });
+      form.action = `/instances/${encodeURIComponent(button.dataset.hostname)}/publish`;
+      publishDialog.showModal();
+    });
+
+    fileInput.addEventListener("change", () => setPublishFile(fileInput.files[0]));
+
+    ["dragenter", "dragover"].forEach((type) => drop.addEventListener(type, (event) => {
+      event.preventDefault();
+      drop.classList.add("dragging");
+    }));
+    ["dragleave", "drop"].forEach((type) => drop.addEventListener(type, (event) => {
+      event.preventDefault();
+      drop.classList.remove("dragging");
+    }));
+    drop.addEventListener("drop", (event) => setPublishFile(event.dataTransfer.files[0]));
+
+    publishDialog.querySelector("[data-dialog-cancel]").addEventListener("click", () => publishDialog.close());
+    publishDialog.addEventListener("click", (event) => {
+      if (event.target === publishDialog) publishDialog.close();
+    });
+
+    form.addEventListener("submit", (event) => {
+      if (!fileInput.files[0]) {
+        event.preventDefault();
+        showPublishError("Selecciona el archivo ZIP que quieres publicar.");
+        return;
+      }
+      submit.disabled = true;
+      submitLabel.textContent = "Subiendo…";
+    });
+  }
+
   // Buscador por hostname y filtro por estado.
   const search = document.querySelector("[data-search]");
   if (search) {

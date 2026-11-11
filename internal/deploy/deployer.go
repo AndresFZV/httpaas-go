@@ -39,6 +39,7 @@ func (d *Deployer) Deploy(ctx context.Context, host string, archive io.Reader) e
 }
 
 // publishScript descomprime el .zip en una carpeta temporal y reemplaza con ella el directorio web.
+// El directorio web pertenece al usuario deploy, así que no se usa sudo.
 func publishScript(webRoot string) string {
 	return fmt.Sprintf(`set -eu
 ARCHIVE=%[1]s
@@ -49,8 +50,11 @@ trap 'rm -rf "$STAGING" "$ARCHIVE"' EXIT
 # unzip devuelve 1 cuando solo hay advertencias (por ejemplo, rutas con barra invertida).
 unzip -q -o "$ARCHIVE" -d "$STAGING" || [ $? -eq 1 ]
 
-sudo find "$WEB_ROOT" -mindepth 1 -delete
-sudo cp -a "$STAGING"/. "$WEB_ROOT"/
-sudo chown -R www-data:www-data "$WEB_ROOT"
+find "$WEB_ROOT" -mindepth 1 -delete
+cp -a "$STAGING"/. "$WEB_ROOT"/
+
+# mktemp -d crea la carpeta con permisos 700 y cp -a los copia al directorio web;
+# Apache necesita poder leer todo.
+chmod -R a+rX "$WEB_ROOT"
 `, remoteArchive, webRoot)
 }

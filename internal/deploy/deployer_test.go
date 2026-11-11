@@ -46,7 +46,7 @@ func TestDeployUploadsAndPublishes(t *testing.T) {
 	if f.ranOn != "192.168.10.30" {
 		t.Errorf("script ejecutado en %q", f.ranOn)
 	}
-	for _, want := range []string{"unzip", "WEB_ROOT=/var/www/html", "chown -R www-data:www-data"} {
+	for _, want := range []string{"unzip", "WEB_ROOT=/var/www/html", "chmod -R a+rX"} {
 		if !strings.Contains(f.script, want) {
 			t.Errorf("el script no contiene %q:\n%s", want, f.script)
 		}

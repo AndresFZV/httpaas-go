@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Negocios</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; }
+        body {
+            font-family: "Segoe UI", system-ui, sans-serif;
+            color: #1f2937;
+            background: #ffffff;
+        }
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+            padding: 20px 32px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        header strong { font-size: 1.4rem; }
+        nav { display: flex; gap: 20px; font-size: 0.95rem; }
+        nav a { color: #4b5563; text-decoration: none; }
+        nav a:hover { color: #111827; }
+        .hero {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            align-items: center;
+            gap: 32px;
+            max-width: 1000px;
+            margin: 48px auto;
+            padding: 0 32px;
+        }
+        .hero h1 { font-size: 2.4rem; line-height: 1.2; }
+        .hero p { margin: 16px 0 24px; color: #4b5563; }
+        .button {
+            display: inline-block;
+            padding: 10px 20px;
+            border: 1px solid #111827;
+            border-radius: 4px;
+            color: #111827;
+            text-decoration: none;
+        }
+        .button:hover { background: #111827; color: #ffffff; }
+        .services {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 16px;
+            max-width: 1000px;
+            margin: 0 auto 48px;
+            padding: 0 32px;
+        }
+        .card {
+            padding: 20px;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+        }
+        .card h2 { font-size: 1.05rem; margin-bottom: 8px; }
+        .card p { color: #4b5563; font-size: 0.95rem; }
+        footer {
+            padding: 16px 32px;
+            border-top: 1px solid #e5e7eb;
+            color: #6b7280;
+            font-size: 0.85rem;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <strong>Negocios</strong>
+        <nav>
+            <a href="#">Inicio</a>
+            <a href="#nosotros">Sobre nosotros</a>
+            <a href="#servicios">Servicios</a>
+            <a href="#contacto">Contacto</a>
+        </nav>
+    </header>
+
+    <main>
+        <section class="hero">
+            <svg viewBox="0 0 320 240" role="img" aria-label="Gráfico de barras en crecimiento">
+                <line x1="20" y1="220" x2="300" y2="220" stroke="#9ca3af" stroke-width="2"/>
+                <rect x="40" y="160" width="40" height="60" fill="#ef4444"/>
+                <rect x="100" y="120" width="40" height="100" fill="#f59e0b"/>
+                <rect x="160" y="90" width="40" height="130" fill="#22c55e"/>
+                <rect x="220" y="50" width="40" height="170" fill="#3b82f6"/>
+                <polyline points="30,190 120,130 190,110 280,30" fill="none" stroke="#1e3a5f" stroke-width="6"/>
+                <polygon points="280,30 258,32 274,48" fill="#1e3a5f"/>
+            </svg>
+            <div id="nosotros">
+                <h1>Soluciones para tu empresa</h1>
+                <p>Acompañamos a pequeñas y medianas empresas a crecer con procesos claros y tecnología a su medida.</p>
+                <a class="button" href="#servicios">Saber más</a>
+            </div>
+        </section>
+
+        <section id="servicios" class="services">
+            <article class="card">
+                <h2>Consultoría</h2>
+                <p>Diagnóstico de procesos y plan de mejora.</p>
+            </article>
+            <article class="card">
+                <h2>Desarrollo web</h2>
+                <p>Sitios y aplicaciones para vender en línea.</p>
+            </article>
+            <article class="card">
+                <h2>Analítica</h2>
+                <p>Indicadores para tomar mejores decisiones.</p>
+            </article>
+        </section>
+    </main>
+
+    <footer id="contacto">Servido por Apache en negocios.cloud.local</footer>
+</body>
+</html>

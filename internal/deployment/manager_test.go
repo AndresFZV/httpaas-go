@@ -208,3 +208,32 @@ func TestRetryRejectsRunningOrUnknown(t *testing.T) {
 		t.Errorf("Retry() de un despliegue exitoso = %v", err)
 	}
 }
+
+// blockingProvisioner espera a que se cierre release antes de terminar.
+type blockingProvisioner struct {
+	release chan struct{}
+}
+
+func (b *blockingProvisioner) Provision(_ context.Context, hostname string, _ provision.ReportFunc) (instance.Instance, error) {
+	<-b.release
+	return instance.Instance{Hostname: hostname, IP: netip.MustParseAddr("192.168.10.30")}, nil
+}
+
+func TestActiveHostnamesWhileRunning(t *testing.T) {
+	p := &blockingProvisioner{release: make(chan struct{})}
+	m, err := NewManager(t.TempDir(), p, &fakeDeployer{}, &fakeVerifier{})
+	if err != nil {
+		t.Fatalf("NewManager() error: %v", err)
+	}
+
+	id, _ := m.Start("paisajes", nil, "")
+	if active := m.ActiveHostnames(); !active["paisajes"] {
+		t.Errorf("ActiveHostnames() = %v, se esperaba paisajes en curso", active)
+	}
+
+	close(p.release)
+	waitFinished(t, m, id)
+	if active := m.ActiveHostnames(); active["paisajes"] {
+		t.Errorf("ActiveHostnames() = %v, paisajes ya terminó", active)
+	}
+}

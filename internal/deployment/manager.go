@@ -220,6 +220,20 @@ func (m *Manager) Snapshot(id string) (Snapshot, error) {
 	return snap, nil
 }
 
+// ActiveHostnames devuelve los hostnames que tienen un despliegue en curso.
+func (m *Manager) ActiveHostnames() map[string]bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	active := make(map[string]bool)
+	for _, j := range m.jobs {
+		if j.status == StatusRunning {
+			active[j.hostname] = true
+		}
+	}
+	return active
+}
+
 // run ejecuta el despliegue desde la etapa from y registra el resultado.
 func (m *Manager) run(j *job, from int) {
 	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)

@@ -115,3 +115,17 @@ func TestDeleteVMIgnoresMissingVM(t *testing.T) {
 		t.Errorf("comandos = %v, se esperaba un solo intento de unregistervm", f.calls)
 	}
 }
+
+func TestVersionReturnsTrimmedOutput(t *testing.T) {
+	m := &Manager{run: func(context.Context, ...string) ([]byte, error) {
+		return []byte("7.2.6r172322\r\n"), nil
+	}}
+
+	version, err := m.Version(context.Background())
+	if err != nil {
+		t.Fatalf("Version() error: %v", err)
+	}
+	if version != "7.2.6r172322" {
+		t.Errorf("Version() = %q", version)
+	}
+}

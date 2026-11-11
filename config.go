@@ -29,7 +29,6 @@ type config struct {
 	VBoxManage   string     // HTTPAAS_VBOXMANAGE
 	TemplateDisk string     // HTTPAAS_TEMPLATE_DISK
 	HostOnlyIF   string     // HTTPAAS_HOSTONLY_IF
-	Interface    string     // HTTPAAS_VM_INTERFACE
 	SSHUser      string     // HTTPAAS_SSH_USER
 	SSHKey       string     // HTTPAAS_SSH_KEY
 	TemplateIP   netip.Addr // HTTPAAS_TEMPLATE_IP
@@ -56,9 +55,8 @@ func loadConfig() (config, error) {
 		Addr:         getEnv("HTTPAAS_ADDR", ":8080"),
 		DataFile:     getEnv("HTTPAAS_DATA_FILE", filepath.Join("data", "instances.json")),
 		VBoxManage:   getEnv("HTTPAAS_VBOXMANAGE", defaultVBoxManage()),
-		TemplateDisk: getEnv("HTTPAAS_TEMPLATE_DISK", filepath.Join(home, "VirtualBox VMs", "ApacheServer", "ApacheServer.vdi")),
+		TemplateDisk: getEnv("HTTPAAS_TEMPLATE_DISK", `C:\HTTPaaS\ApacheServer.vdi`),
 		HostOnlyIF:   getEnv("HTTPAAS_HOSTONLY_IF", "VirtualBox Host-Only Ethernet Adapter"),
-		Interface:    getEnv("HTTPAAS_VM_INTERFACE", "enp0s3"),
 		SSHUser:      getEnv("HTTPAAS_SSH_USER", "deploy"),
 		SSHKey:       getEnv("HTTPAAS_SSH_KEY", filepath.Join(home, ".ssh", "httpaas")),
 		TemplateIP:   templateIP,

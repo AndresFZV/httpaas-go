@@ -18,6 +18,9 @@ import (
 // apacheWebRoot es el directorio que Apache sirve en cada instancia.
 const apacheWebRoot = "/var/www/html"
 
+// dnsKeyFile es la clave TSIG de Bind9 dentro del servidor ns.
+const dnsKeyFile = "/etc/bind/cloud-key.key"
+
 func main() {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -49,11 +52,10 @@ func main() {
 		ConnectTimeout: sshConnectTimeout,
 	})
 
-	dnsUpdater := dns.NewUpdater(ssh, cfg.DNSServer.String(), instance.Domain, dnsTTL)
+	dnsUpdater := dns.NewUpdater(ssh, cfg.DNSServer.String(), instance.Domain, dnsKeyFile, dnsTTL)
 
 	provisioner := provision.New(provision.Config{
 		TemplateIP:   cfg.TemplateIP,
-		Interface:    cfg.Interface,
 		BootTimeout:  bootTimeout,
 		PollInterval: sshPollInterval,
 	}, store, vms, ssh, dnsUpdater)

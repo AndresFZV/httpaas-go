@@ -27,9 +27,9 @@ type config struct {
 	Addr         string     // HTTPAAS_ADDR
 	DataFile     string     // HTTPAAS_DATA_FILE
 	VBoxManage   string     // HTTPAAS_VBOXMANAGE
+	SSHPath      string     // HTTPAAS_SSH
 	TemplateDisk string     // HTTPAAS_TEMPLATE_DISK
 	HostOnlyIF   string     // HTTPAAS_HOSTONLY_IF
-	Interface    string     // HTTPAAS_VM_INTERFACE
 	SSHUser      string     // HTTPAAS_SSH_USER
 	SSHKey       string     // HTTPAAS_SSH_KEY
 	TemplateIP   netip.Addr // HTTPAAS_TEMPLATE_IP
@@ -56,9 +56,9 @@ func loadConfig() (config, error) {
 		Addr:         getEnv("HTTPAAS_ADDR", ":8080"),
 		DataFile:     getEnv("HTTPAAS_DATA_FILE", filepath.Join("data", "instances.json")),
 		VBoxManage:   getEnv("HTTPAAS_VBOXMANAGE", defaultVBoxManage()),
-		TemplateDisk: getEnv("HTTPAAS_TEMPLATE_DISK", filepath.Join(home, "VirtualBox VMs", "ApacheServer", "ApacheServer.vdi")),
+		SSHPath:      getEnv("HTTPAAS_SSH", defaultSSH()),
+		TemplateDisk: getEnv("HTTPAAS_TEMPLATE_DISK", `C:\HTTPaaS\ApacheServer.vdi`),
 		HostOnlyIF:   getEnv("HTTPAAS_HOSTONLY_IF", "VirtualBox Host-Only Ethernet Adapter"),
-		Interface:    getEnv("HTTPAAS_VM_INTERFACE", "enp0s3"),
 		SSHUser:      getEnv("HTTPAAS_SSH_USER", "deploy"),
 		SSHKey:       getEnv("HTTPAAS_SSH_KEY", filepath.Join(home, ".ssh", "httpaas")),
 		TemplateIP:   templateIP,
@@ -73,11 +73,13 @@ func (c config) logSummary() {
 	log.Printf("adaptador host-only: %s", c.HostOnlyIF)
 	log.Printf("IP temporal de la plantilla: %s, servidor DNS: %s", c.TemplateIP, c.DNSServer)
 	log.Printf("SSH: %s con llave %s", c.SSHUser, c.SSHKey)
+	log.Printf("cliente SSH: %s", c.SSHPath)
 
 	for name, path := range map[string]string{
 		"VBoxManage":      c.VBoxManage,
 		"disco plantilla": c.TemplateDisk,
 		"llave SSH":       c.SSHKey,
+		"cliente SSH":     c.SSHPath,
 	} {
 		if _, err := os.Stat(path); err != nil {
 			log.Printf("ADVERTENCIA: no se encontró %s en %s; el aprovisionamiento fallará", name, path)
@@ -90,6 +92,15 @@ func defaultVBoxManage() string {
 		return `C:\Program Files\Oracle\VirtualBox\VBoxManage.exe`
 	}
 	return "/usr/bin/VBoxManage"
+}
+
+// defaultSSH usa en Windows el cliente OpenSSH del sistema y no el de Git Bash,
+// porque el de Git Bash no reconoce NUL como archivo nulo y crea un archivo con ese nombre.
+func defaultSSH() string {
+	if runtime.GOOS == "windows" {
+		return `C:\Windows\System32\OpenSSH\ssh.exe`
+	}
+	return "ssh"
 }
 
 // getEnv devuelve el valor de la variable de entorno key o fallback si no está definida.

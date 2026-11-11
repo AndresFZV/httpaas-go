@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Paisajes</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; }
+        body {
+            font-family: "Segoe UI", system-ui, sans-serif;
+            color: #ffffff;
+            background: #0f2a3a;
+        }
+        .scene {
+            position: relative;
+            height: 100vh;
+            min-height: 480px;
+            overflow: hidden;
+        }
+        .scene svg {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+        }
+        .caption {
+            position: absolute;
+            left: 32px;
+            bottom: 40px;
+            max-width: 480px;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+        }
+        .caption h1 { font-size: 3rem; font-weight: 600; }
+        .caption p { margin-top: 8px; font-size: 1.1rem; }
+        .host {
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            padding: 6px 12px;
+            background: rgba(0, 0, 0, 0.35);
+            border-radius: 4px;
+            font-size: 0.85rem;
+        }
+    </style>
+</head>
+<body>
+    <main class="scene">
+        <svg viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+            <defs>
+                <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#7ec8f0"/>
+                    <stop offset="1" stop-color="#f6e7c1"/>
+                </linearGradient>
+                <linearGradient id="lake" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#4f8fb0"/>
+                    <stop offset="1" stop-color="#1d4e68"/>
+                </linearGradient>
+            </defs>
+            <rect width="1200" height="800" fill="url(#sky)"/>
+            <circle cx="930" cy="170" r="60" fill="#fff4cf"/>
+            <polygon points="0,560 260,300 470,560" fill="#6d7f8c"/>
+            <polygon points="300,560 640,170 980,560" fill="#56697a"/>
+            <polygon points="560,250 640,170 720,250 680,240 640,265 600,240" fill="#ffffff"/>
+            <polygon points="780,560 1020,330 1200,500 1200,560" fill="#6d7f8c"/>
+            <rect y="540" width="1200" height="60" fill="#3f6b3a"/>
+            <rect y="590" width="1200" height="210" fill="url(#lake)"/>
+            <polygon points="300,590 640,900 980,590" fill="#56697a" opacity="0.35"/>
+            <g fill="#2d4f2a">
+                <polygon points="60,600 90,500 120,600"/>
+                <polygon points="110,600 145,480 180,600"/>
+                <polygon points="1040,600 1075,490 1110,600"/>
+                <polygon points="1100,600 1130,510 1160,600"/>
+            </g>
+        </svg>
+
+        <span class="host">Servido por Apache en paisajes.cloud.local</span>
+
+        <div class="caption">
+            <h1>Paisajes</h1>
+            <p>Montañas, lagos y bosques. Una página publicada con el servicio HTTPaaS.</p>
+        </div>
+    </main>
+</body>
+</html>

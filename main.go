@@ -8,6 +8,7 @@ import (
 
 	"github.com/AndresFZV/httpaas-go/internal/deploy"
 	"github.com/AndresFZV/httpaas-go/internal/dns"
+	"github.com/AndresFZV/httpaas-go/internal/hostnet"
 	"github.com/AndresFZV/httpaas-go/internal/instance"
 	"github.com/AndresFZV/httpaas-go/internal/provision"
 	"github.com/AndresFZV/httpaas-go/internal/remote"
@@ -17,6 +18,9 @@ import (
 
 // apacheWebRoot es el directorio que Apache sirve en cada instancia.
 const apacheWebRoot = "/var/www/html"
+
+// dnsKeyFile es la clave TSIG de Bind9 dentro del servidor ns.
+const dnsKeyFile = "/etc/bind/cloud-key.key"
 
 func main() {
 	cfg, err := loadConfig()
@@ -43,20 +47,19 @@ func main() {
 	})
 
 	ssh := remote.NewClient(remote.Config{
-		SSHPath:        "ssh",
+		SSHPath:        cfg.SSHPath,
 		User:           cfg.SSHUser,
 		KeyFile:        cfg.SSHKey,
 		ConnectTimeout: sshConnectTimeout,
 	})
 
-	dnsUpdater := dns.NewUpdater(ssh, cfg.DNSServer.String(), instance.Domain, dnsTTL)
+	dnsUpdater := dns.NewUpdater(ssh, cfg.DNSServer.String(), instance.Domain, dnsKeyFile, dnsTTL)
 
 	provisioner := provision.New(provision.Config{
 		TemplateIP:   cfg.TemplateIP,
-		Interface:    cfg.Interface,
 		BootTimeout:  bootTimeout,
 		PollInterval: sshPollInterval,
-	}, store, vms, ssh, dnsUpdater)
+	}, store, vms, ssh, dnsUpdater, hostnet.NewARPCache())
 
 	deployer := deploy.NewDeployer(ssh, apacheWebRoot)
 

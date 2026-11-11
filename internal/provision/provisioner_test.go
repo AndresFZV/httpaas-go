@@ -64,6 +64,15 @@ func (f *fakeDNS) DeleteRecord(_ context.Context, hostname string) error {
 	return nil
 }
 
+type fakeNeighbors struct {
+	forgotten []string
+}
+
+func (f *fakeNeighbors) Forget(_ context.Context, ip netip.Addr) error {
+	f.forgotten = append(f.forgotten, ip.String())
+	return nil
+}
+
 func newTestProvisioner(t *testing.T, dns *fakeDNS) (*Provisioner, *instance.Store, *fakeVMs, *fakeSSH) {
 	t.Helper()
 
@@ -80,11 +89,10 @@ func newTestProvisioner(t *testing.T, dns *fakeDNS) (*Provisioner, *instance.Sto
 	ssh := &fakeSSH{}
 	cfg := Config{
 		TemplateIP:   netip.MustParseAddr("192.168.10.20"),
-		Interface:    "enp0s3",
 		BootTimeout:  time.Second,
 		PollInterval: time.Millisecond,
 	}
-	return New(cfg, store, vms, ssh, dns), store, vms, ssh
+	return New(cfg, store, vms, ssh, dns, &fakeNeighbors{}), store, vms, ssh
 }
 
 func TestProvisionRunsAllSteps(t *testing.T) {
@@ -108,8 +116,8 @@ func TestProvisionRunsAllSteps(t *testing.T) {
 	if !slices.Equal(ssh.ranOn, []string{"192.168.10.20"}) {
 		t.Errorf("script ejecutado en %v, se esperaba la IP temporal", ssh.ranOn)
 	}
-	if !strings.Contains(ssh.lastRun, "address 192.168.10.30/24") {
-		t.Errorf("el script no asigna la IP final:\n%s", ssh.lastRun)
+	if want := "sudo -n /usr/local/bin/configurar-instancia.sh paisajes 192.168.10.30"; !strings.Contains(ssh.lastRun, want) {
+		t.Errorf("comando de configuración = %q, se esperaba %q", ssh.lastRun, want)
 	}
 	if !slices.Equal(dns.added, []string{"paisajes"}) {
 		t.Errorf("registros DNS = %v", dns.added)
@@ -167,5 +175,20 @@ func TestDeleteRemovesDNSVMAndRecord(t *testing.T) {
 	}
 	if _, err := store.Get("paisajes"); !errors.Is(err, instance.ErrNotFound) {
 		t.Errorf("la instancia sigue en el registro: %v", err)
+	}
+}
+
+func TestProvisionForgetsARPBeforeWaiting(t *testing.T) {
+	dns := &fakeDNS{}
+	p, _, _, _ := newTestProvisioner(t, dns)
+	neighbors := &fakeNeighbors{}
+	p.neighbors = neighbors
+
+	if _, err := p.Provision(context.Background(), "paisajes"); err != nil {
+		t.Fatalf("Provision() error: %v", err)
+	}
+
+	if want := []string{"192.168.10.20", "192.168.10.30"}; !slices.Equal(neighbors.forgotten, want) {
+		t.Errorf("IPs limpiadas = %v, se esperaba %v", neighbors.forgotten, want)
 	}
 }

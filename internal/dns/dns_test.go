@@ -18,9 +18,13 @@ func (f *fakeRunner) Run(_ context.Context, host, script string) error {
 	return nil
 }
 
+func newTestUpdater(f *fakeRunner) *Updater {
+	return NewUpdater(f, "192.168.10.10", "cloud.local", "/etc/bind/cloud-key.key", 300)
+}
+
 func TestAddRecordSendsNsupdateCommands(t *testing.T) {
 	f := &fakeRunner{}
-	u := NewUpdater(f, "192.168.10.10", "cloud.local", 300)
+	u := newTestUpdater(f)
 
 	if err := u.AddRecord(context.Background(), "paisajes", netip.MustParseAddr("192.168.10.30")); err != nil {
 		t.Fatalf("AddRecord() error: %v", err)
@@ -30,8 +34,9 @@ func TestAddRecordSendsNsupdateCommands(t *testing.T) {
 		t.Errorf("host = %q, se esperaba el servidor DNS", f.host)
 	}
 	for _, want := range []string{
-		"sudo nsupdate -l",
-		"zone cloud.local.",
+		"sudo -n nsupdate -k /etc/bind/cloud-key.key",
+		"server 192.168.10.10",
+		"zone cloud.local",
 		"update delete paisajes.cloud.local. A",
 		"update add paisajes.cloud.local. 300 A 192.168.10.30",
 		"send",
@@ -44,7 +49,7 @@ func TestAddRecordSendsNsupdateCommands(t *testing.T) {
 
 func TestDeleteRecordOnlyDeletes(t *testing.T) {
 	f := &fakeRunner{}
-	u := NewUpdater(f, "192.168.10.10", "cloud.local", 300)
+	u := newTestUpdater(f)
 
 	if err := u.DeleteRecord(context.Background(), "paisajes"); err != nil {
 		t.Fatalf("DeleteRecord() error: %v", err)

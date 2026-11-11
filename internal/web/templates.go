@@ -21,6 +21,7 @@ var templateFuncs = template.FuncMap{
 	"icon":        icon,
 	"displayName": displayName,
 	"formatDate":  formatDate,
+	"inc":         func(i int) int { return i + 1 },
 }
 
 // loadPages crea un conjunto de plantillas por página: layout + partials + la página.

@@ -1,0 +1,210 @@
+{{define "step-indicator"}}
+<div class="step-indicator">
+    <span class="ind-num">{{inc .}}</span>
+    <span class="ind-check">{{icon "check" 14}}</span>
+    <span class="ind-alert">{{icon "alert" 13}}</span>
+    <i class="ind-dot"></i>
+</div>
+{{end}}
+
+{{define "content"}}
+{{with .Deployment}}
+{{$d := .}}
+
+{{if eq .Status "succeeded"}}
+<div class="success-page">
+    <div class="success-check">{{icon "check" 35}}</div>
+    <p class="success-eyebrow">DESPLIEGUE COMPLETADO</p>
+    {{if .HasContent}}
+        <h1>¡Tu aplicación está publicada!</h1>
+        <p>Tu instancia Apache está lista y puedes acceder a tu aplicación mediante el siguiente enlace.</p>
+    {{else}}
+        <h1>¡Tu instancia está lista!</h1>
+        <p>La instancia Apache está creada. Mientras publicas tu contenido, muestra la página por defecto de Apache.</p>
+    {{end}}
+
+    <section class="panel success-card">
+        <div class="success-card-head">
+            <div class="instance-name">
+                <span>{{icon "server" 20}}</span>
+                <div>
+                    <strong>{{displayName .Hostname}}</strong>
+                    <small>Servidor Apache · Debian 13</small>
+                </div>
+            </div>
+            <span class="status-badge"><i></i> Activa</span>
+        </div>
+        <div class="success-details">
+            <div><span>HOSTNAME</span><strong>{{.FQDN}}</strong></div>
+            <div><span>DIRECCIÓN IP</span><code>{{.IP}}</code></div>
+            <div class="success-url">
+                <span>URL DE ACCESO</span>
+                <a href="{{.URL}}" target="_blank" rel="noopener">{{.URL}} {{icon "external" 17}}</a>
+            </div>
+        </div>
+        <div class="completion-summary">
+            <span><i>{{icon "check" 11}}</i> Máquina virtual creada</span>
+            <span><i>{{icon "check" 11}}</i> DNS registrado</span>
+            <span><i>{{icon "check" 11}}</i> {{if .HasContent}}Contenido publicado{{else}}Sin contenido (publica después){{end}}</span>
+            <span><i>{{icon "check" 11}}</i> Apache respondió por HTTP</span>
+        </div>
+        <div class="success-actions">
+            <a class="visit-button" href="{{.URL}}" target="_blank" rel="noopener">Visitar aplicación {{icon "external" 17}}</a>
+            <button type="button" class="secondary-button" data-copy="{{.URL}}">{{icon "copy" 16}} Copiar enlace</button>
+        </div>
+    </section>
+    <a class="new-deploy-link" href="/">{{icon "arrow" 16}} Volver al dashboard</a>
+</div>
+
+{{else if eq .Status "failed"}}
+<div class="process-page error-page">
+    <div class="process-top">
+        <div class="error-graphic">{{icon "alert" 30}}</div>
+        <p>DESPLIEGUE INTERRUMPIDO</p>
+        <h1>No pudimos completar el despliegue</h1>
+        {{if ge .FailedStep $.StepIndex.publish}}
+            <span>La instancia quedó creada; al reintentar solo se repiten la publicación y la verificación.</span>
+        {{else}}
+            <span>Los cambios se deshicieron automáticamente; al reintentar se crea la instancia desde el principio.</span>
+        {{end}}
+    </div>
+
+    <section class="panel error-card">
+        <div class="error-summary">
+            <div>{{icon "alert" 20}}</div>
+            <span>
+                <small>ERROR EN LA ETAPA {{inc .FailedStep}}</small>
+                <strong>{{(index $.Steps .FailedStep).Label}}</strong>
+            </span>
+        </div>
+        <p>{{.Error}} Instancia: <strong>{{.FQDN}}</strong>.</p>
+        <div class="error-component">
+            <span>Componente afectado</span>
+            <strong>{{.Component}}</strong>
+        </div>
+
+        <div class="steps error-steps">
+            {{range $i, $step := $.Steps}}
+                {{$state := "pending"}}
+                {{if lt $i $d.FailedStep}}{{$state = "complete"}}{{else if eq $i $d.FailedStep}}{{$state = "error"}}{{end}}
+                {{$skipped := and (eq $i $.StepIndex.publish) (not $d.HasContent) (eq $state "complete")}}
+                <div class="step {{$state}}{{if $skipped}} skipped{{end}}">
+                    {{template "step-indicator" $i}}
+                    <div class="step-copy">
+                        <span>{{$step.Label}}</span>
+                        {{if eq $state "error"}}<p>{{$step.FailMessage}}</p>{{end}}
+                    </div>
+                    <small>{{if $skipped}}Omitido{{else if eq $state "complete"}}Completado{{else if eq $state "error"}}Error{{else}}Pendiente{{end}}</small>
+                </div>
+            {{end}}
+        </div>
+
+        <div class="error-actions">
+            <form method="post" action="/deployments/{{.ID}}/retry">
+                <button type="submit" class="primary-button">{{icon "refresh" 16}} Reintentar</button>
+            </form>
+            <a class="secondary-button" href="/">Volver al dashboard</a>
+        </div>
+    </section>
+</div>
+
+{{else}}
+<div class="process-page" data-progress data-api="/api/deployments/{{.ID}}"
+     data-publish-step="{{$.StepIndex.publish}}">
+    <div class="process-top">
+        <div class="process-graphic">
+            <div class="orbit orbit-one"></div>
+            <div class="orbit orbit-two"></div>
+            <div class="process-server">{{icon "server" 27}}</div>
+        </div>
+        <p>DESPLIEGUE EN PROGRESO</p>
+        <h1>Estamos preparando tu aplicación</h1>
+        <span>Puede tardar unos 3 minutos. Si cierras esta ventana, el despliegue continúa y la instancia aparecerá en el listado.</span>
+    </div>
+
+    <section class="panel progress-card">
+        <div class="progress-card-head">
+            <div>
+                <span>Instancia</span>
+                <strong>{{.FQDN}}</strong>
+            </div>
+            <b data-percent>{{.Percent}}%</b>
+        </div>
+        <div class="progress-bar"><span data-bar></span></div>
+
+        <div class="steps">
+            {{range $i, $step := $.Steps}}
+            <div class="step pending" data-step="{{$i}}">
+                {{template "step-indicator" $i}}
+                <div class="step-copy">
+                    <span>{{$step.Label}}</span>
+                    <div class="active-step-details">
+                        {{range $j, $detail := $step.Details}}
+                            <div class="{{if eq $j 0}}active-subtask{{end}}"><i></i>{{$detail}}</div>
+                        {{end}}
+                    </div>
+                </div>
+                <small>Pendiente</small>
+            </div>
+            {{end}}
+        </div>
+    </section>
+
+    <section class="panel infrastructure-card">
+        <div class="infrastructure-heading">
+            <div>
+                <h2>Detalles de infraestructura</h2>
+                <p>Los valores se confirman a medida que avanza el aprovisionamiento.</p>
+            </div>
+            <span class="live-config"><i></i> Actualizando</span>
+        </div>
+        <div class="infrastructure-grid">
+            <div class="infrastructure-item" data-infra="hostname" data-ready-after="-1"
+                 data-ready="{{.FQDN}}" data-pending="{{.FQDN}}">
+                <span>Hostname</span>
+                <strong><span class="ready-check">{{icon "check" 13}}</span><span data-value>{{.FQDN}}</span></strong>
+            </div>
+            <div class="infrastructure-item" data-infra="ip" data-ready-after="{{$.StepIndex.validate}}"
+                 data-pending="Pendiente de asignación">
+                <span>Dirección IP</span>
+                <strong><span class="ready-check">{{icon "check" 13}}</span><span data-value>Pendiente de asignación</span></strong>
+            </div>
+            <div class="infrastructure-item" data-infra="vm" data-ready-after="{{$.StepIndex.waitBoot}}"
+                 data-ready="En ejecución · Debian 13" data-pending="Pendiente de creación">
+                <span>Máquina virtual</span>
+                <strong><span class="ready-check">{{icon "check" 13}}</span><span data-value>Pendiente de creación</span></strong>
+            </div>
+            <div class="infrastructure-item" data-infra="network" data-ready-after="{{$.StepIndex.waitFinalIP}}"
+                 data-ready="enp0s8 · IP definitiva activa" data-pending="Pendiente de configuración">
+                <span>Red</span>
+                <strong><span class="ready-check">{{icon "check" 13}}</span><span data-value>Pendiente de configuración</span></strong>
+            </div>
+            <div class="infrastructure-item" data-infra="dns" data-ready-after="{{$.StepIndex.registerDNS}}"
+                 data-ready="Registrado en Bind9" data-pending="Pendiente de registro">
+                <span>Servidor DNS</span>
+                <strong><span class="ready-check">{{icon "check" 13}}</span><span data-value>Pendiente de registro</span></strong>
+            </div>
+            <div class="infrastructure-item" data-infra="content" data-ready-after="{{$.StepIndex.publish}}"
+                 data-ready="{{if .HasContent}}{{.ArchiveName}}{{else}}Sin archivo; puedes publicar después{{end}}"
+                 data-pending="Pendiente de publicación">
+                <span>Contenido</span>
+                <strong><span class="ready-check">{{icon "check" 13}}</span><span data-value>Pendiente de publicación</span></strong>
+            </div>
+        </div>
+    </section>
+
+    <p class="process-footnote">{{icon "info" 16}} La IP se asigna automáticamente desde el rango disponible.</p>
+</div>
+{{end}}
+
+{{else}}
+<section class="panel">
+    <div class="empty-state">
+        <div>{{icon "search" 24}}</div>
+        <h3>No encontramos este despliegue</h3>
+        <p>El enlace no es válido o la aplicación se reinició. Revisa el listado de instancias.</p>
+        <a class="secondary-button" href="/instances">Ver instancias</a>
+    </div>
+</section>
+{{end}}
+{{end}}

@@ -31,7 +31,7 @@
                 {{icon "server" 18}} Instancias
                 <span class="nav-count">{{len .Instances}}</span>
             </a>
-            <a href="/deploy" class="{{if eq .Page "deploy"}}active{{end}}">
+            <a href="/deploy" class="{{if or (eq .Page "deploy") (eq .Page "deployment")}}active{{end}}">
                 {{icon "rocket" 18}} Desplegar aplicación
             </a>
         </nav>

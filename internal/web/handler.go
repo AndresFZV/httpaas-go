@@ -14,21 +14,31 @@ import (
 	"slices"
 
 	"github.com/AndresFZV/httpaas-go/internal/deploy"
+	"github.com/AndresFZV/httpaas-go/internal/deployment"
 	"github.com/AndresFZV/httpaas-go/internal/instance"
-	"github.com/AndresFZV/httpaas-go/internal/provision"
 )
 
 const recentLimit = 5
 
-// Provisioner crea y elimina instancias completas (VM, red y DNS).
+// stepIndex expone a las plantillas los índices de las etapas que necesitan por nombre.
+var stepIndex = map[string]int{
+	"validate":    deployment.StepValidate,
+	"waitBoot":    deployment.StepWaitBoot,
+	"waitFinalIP": deployment.StepWaitFinalIP,
+	"registerDNS": deployment.StepRegisterDNS,
+	"publish":     deployment.StepPublish,
+}
+
+// Provisioner elimina instancias completas (VM, red y DNS).
 type Provisioner interface {
-	Provision(ctx context.Context, hostname string, report provision.ReportFunc) (instance.Instance, error)
 	Delete(ctx context.Context, hostname string) error
 }
 
-// Deployer publica el contenido de un .zip en una instancia.
-type Deployer interface {
-	Deploy(ctx context.Context, host string, archive io.Reader) error
+// Deployments ejecuta despliegues en segundo plano y permite consultar su estado.
+type Deployments interface {
+	Start(hostname string, archive io.Reader, archiveName string) (string, error)
+	Retry(id string) (string, error)
+	Snapshot(id string) (deployment.Snapshot, error)
 }
 
 // Config son los datos de la infraestructura que muestra la interfaz y las rutas de sus archivos.
@@ -46,12 +56,12 @@ type Handler struct {
 	cfg         Config
 	store       *instance.Store
 	provisioner Provisioner
-	deployer    Deployer
+	deployments Deployments
 	pages       map[string]*template.Template
 }
 
 // NewHandler carga las páginas de la interfaz y prepara los handlers.
-func NewHandler(cfg Config, store *instance.Store, provisioner Provisioner, deployer Deployer) (*Handler, error) {
+func NewHandler(cfg Config, store *instance.Store, provisioner Provisioner, deployments Deployments) (*Handler, error) {
 	pages, err := loadPages(cfg.TemplatesDir)
 	if err != nil {
 		return nil, err
@@ -61,7 +71,7 @@ func NewHandler(cfg Config, store *instance.Store, provisioner Provisioner, depl
 		cfg:         cfg,
 		store:       store,
 		provisioner: provisioner,
-		deployer:    deployer,
+		deployments: deployments,
 		pages:       pages,
 	}, nil
 }
@@ -75,6 +85,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /instances", h.instances)
 	mux.HandleFunc("GET /deploy", h.deployForm)
 	mux.HandleFunc("POST /deploy", h.deploy)
+	mux.HandleFunc("GET /deployments/{id}", h.deploymentPage)
+	mux.HandleFunc("POST /deployments/{id}/retry", h.retryDeployment)
+	mux.HandleFunc("GET /api/deployments/{id}", h.deploymentStatus)
 	mux.HandleFunc("POST /instances/{hostname}/delete", h.deleteInstance)
 }
 
@@ -104,6 +117,10 @@ type pageData struct {
 	FormError      string // error del formulario de despliegue
 	MaxUploadMB    int64
 	MaxUploadBytes int64
+
+	Deployment *deployment.Snapshot // despliegue que muestra la página de progreso
+	Steps      []deployment.Step
+	StepIndex  map[string]int
 }
 
 func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
@@ -142,6 +159,8 @@ func (h *Handler) newPage(r *http.Request, page, breadcrumb string) pageData {
 		Toast:          toast,
 		MaxUploadMB:    deploy.MaxArchiveSize >> 20,
 		MaxUploadBytes: deploy.MaxArchiveSize,
+		Steps:          deployment.Steps,
+		StepIndex:      stepIndex,
 	}
 }
 

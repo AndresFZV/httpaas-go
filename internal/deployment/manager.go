@@ -20,8 +20,9 @@ import (
 const runTimeout = 10 * time.Minute
 
 var (
-	ErrNotFound     = errors.New("el despliegue no existe")
-	ErrNotRetryable = errors.New("solo se puede reintentar un despliegue que falló")
+	ErrNotFound       = errors.New("el despliegue no existe")
+	ErrNotRetryable   = errors.New("solo se puede reintentar un despliegue que falló")
+	ErrAlreadyRetried = errors.New("este despliegue ya se reintentó")
 )
 
 // errorsForUser son errores cuyo texto se le muestra tal cual al usuario.
@@ -152,6 +153,11 @@ func (m *Manager) Retry(id string) (string, error) {
 	if old.status != StatusFailed {
 		m.mu.Unlock()
 		return "", ErrNotRetryable
+	}
+
+	if old.hasContent && old.archivePath == "" {
+		m.mu.Unlock()
+		return "", ErrAlreadyRetried
 	}
 
 	from := StepValidate

@@ -19,15 +19,13 @@ const (
 	// multipartMemory es lo que se guarda en memoria; el resto del archivo va a disco temporal.
 	multipartMemory = 10 << 20
 
-	provisionTimeout = 5 * time.Minute
-	deleteTimeout    = 2 * time.Minute
-	deployTimeout    = 2 * time.Minute
+	deleteTimeout = 2 * time.Minute
 )
 
 var (
-	errInvalidForm     = errors.New("no se pudo leer el formulario enviado")
-	errProvisionFailed = errors.New("no se pudo crear la instancia; revise el log del servidor")
-	errDeleteFailed    = errors.New("no se pudo eliminar la instancia; revise el log del servidor")
+	errInvalidForm  = errors.New("no se pudo leer el formulario enviado")
+	errStartFailed  = errors.New("no se pudo iniciar el despliegue; revise el log del servidor")
+	errDeleteFailed = errors.New("no se pudo eliminar la instancia; revise el log del servidor")
 )
 
 // validationErrors son los errores de datos inválidos enviados por el usuario.
@@ -42,7 +40,8 @@ var validationErrors = []error{
 	deploy.ErrArchiveNoIndex,
 }
 
-// deploy atiende el formulario de despliegue: crea la instancia y, si viene un .zip, lo publica.
+// deploy valida el formulario y arranca el despliegue en segundo plano.
+// Redirige de inmediato a la página de progreso.
 func (h *Handler) deploy(w http.ResponseWriter, r *http.Request) {
 	if err := parseRequestForm(w, r); err != nil {
 		h.renderDeployError(w, r, "", err)
@@ -54,53 +53,46 @@ func (h *Handler) deploy(w http.ResponseWriter, r *http.Request) {
 		h.renderDeployError(w, r, hostname, err)
 		return
 	}
-
-	// El .zip es opcional: sin archivo solo se crea la instancia.
-	file, header, err := r.FormFile("content")
-	hasContent := err == nil
-	if err != nil && !errors.Is(err, http.ErrMissingFile) {
-		log.Printf("leer archivo del formulario: %v", err)
-		h.renderDeployError(w, r, hostname, errInvalidForm)
+	if _, err := h.store.Get(hostname); err == nil {
+		h.renderDeployError(w, r, hostname, instance.ErrHostnameTaken)
 		return
 	}
-	if hasContent {
+
+	// El .zip es opcional: sin archivo solo se crea la instancia.
+	var archive io.Reader
+	archiveName := ""
+
+	file, header, err := r.FormFile("content")
+	switch {
+	case err == nil:
 		defer file.Close()
 		if err := deploy.ValidateArchive(file, header.Size, header.Filename); err != nil {
 			h.renderDeployError(w, r, hostname, err)
 			return
 		}
+		// La validación leyó el archivo; se vuelve al inicio antes de guardarlo.
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			log.Printf("reiniciar lectura del archivo: %v", err)
+			h.renderDeployError(w, r, hostname, errInvalidForm)
+			return
+		}
+		archive = file
+		archiveName = header.Filename
+	case !errors.Is(err, http.ErrMissingFile):
+		log.Printf("leer archivo del formulario: %v", err)
+		h.renderDeployError(w, r, hostname, errInvalidForm)
+		return
 	}
 
-	ctx, cancel := backgroundContext(r, provisionTimeout+deployTimeout)
-	defer cancel()
-
-	log.Printf("aprovisionando %s...", hostname)
-	inst, err := h.provisioner.Provision(ctx, hostname, nil)
+	id, err := h.deployments.Start(hostname, archive, archiveName)
 	if err != nil {
-		h.renderDeployError(w, r, hostname, infrastructureError(err, errProvisionFailed, "aprovisionar "+hostname))
+		log.Printf("iniciar despliegue de %s: %v", hostname, err)
+		h.renderDeployError(w, r, hostname, errStartFailed)
 		return
 	}
-	log.Printf("instancia creada: %s (%s)", inst.FQDN(), inst.IP)
+	log.Printf("despliegue %s iniciado para %s", id, hostname)
 
-	if !hasContent {
-		redirectTo(w, r, "/instances?created="+url.QueryEscape(hostname))
-		return
-	}
-
-	// La validación leyó el archivo; se vuelve al inicio antes de enviarlo.
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		log.Printf("publicar en %s: reiniciar lectura del archivo: %v", hostname, err)
-		redirectTo(w, r, "/instances?publish_failed="+url.QueryEscape(hostname))
-		return
-	}
-	if err := h.deployer.Deploy(ctx, inst.IP.String(), file); err != nil {
-		log.Printf("publicar en %s: %v", hostname, err)
-		redirectTo(w, r, "/instances?publish_failed="+url.QueryEscape(hostname))
-		return
-	}
-	log.Printf("contenido %s publicado en %s", header.Filename, inst.FQDN())
-
-	redirectTo(w, r, "/instances?created="+url.QueryEscape(hostname)+"&published=1")
+	redirectTo(w, r, "/deployments/"+url.PathEscape(id))
 }
 
 // deleteInstance borra la VM, su registro DNS y la instancia del registro.
@@ -168,7 +160,7 @@ func statusFor(err error) (status int, known bool) {
 		return http.StatusNotFound, true
 	case errors.Is(err, instance.ErrNoFreeIP):
 		return http.StatusServiceUnavailable, true
-	case errors.Is(err, errProvisionFailed), errors.Is(err, errDeleteFailed):
+	case errors.Is(err, errStartFailed), errors.Is(err, errDeleteFailed):
 		return http.StatusInternalServerError, true
 	}
 

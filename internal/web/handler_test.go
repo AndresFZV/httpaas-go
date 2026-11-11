@@ -1,6 +1,8 @@
 package web
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -9,8 +11,50 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndresFZV/httpaas-go/internal/deployment"
 	"github.com/AndresFZV/httpaas-go/internal/instance"
 )
+
+type fakeDeployments struct {
+	snapshots map[string]deployment.Snapshot
+}
+
+func (f fakeDeployments) Start(string, io.Reader, string) (string, error) {
+	return "nuevo", nil
+}
+
+func (f fakeDeployments) Retry(string) (string, error) {
+	return "", deployment.ErrNotRetryable
+}
+
+func (f fakeDeployments) Snapshot(id string) (deployment.Snapshot, error) {
+	snap, ok := f.snapshots[id]
+	if !ok {
+		return deployment.Snapshot{}, deployment.ErrNotFound
+	}
+	return snap, nil
+}
+
+func newFakeDeployments() fakeDeployments {
+	base := deployment.Snapshot{
+		Hostname:   "negocios",
+		FQDN:       "negocios.cloud.local",
+		URL:        "http://negocios.cloud.local",
+		IP:         "192.168.10.31",
+		HasContent: true,
+	}
+
+	running, succeeded, failed := base, base, base
+	running.ID, running.Status, running.Step, running.Percent = "run", deployment.StatusRunning, deployment.StepWaitBoot, 25
+	succeeded.ID, succeeded.Status, succeeded.Percent = "ok", deployment.StatusSucceeded, 100
+	failed.ID, failed.Status, failed.FailedStep = "fail", deployment.StatusFailed, deployment.StepRegisterDNS
+	failed.Error = deployment.Steps[deployment.StepRegisterDNS].FailMessage
+	failed.Component = deployment.Steps[deployment.StepRegisterDNS].Component
+
+	return fakeDeployments{snapshots: map[string]deployment.Snapshot{
+		"run": running, "ok": succeeded, "fail": failed,
+	}}
+}
 
 func newTestServer(t *testing.T) *http.ServeMux {
 	t.Helper()
@@ -32,7 +76,7 @@ func newTestServer(t *testing.T) *http.ServeMux {
 		LastIP:       last,
 		TemplatesDir: filepath.Join("..", "..", "templates"),
 		StaticDir:    filepath.Join("..", "..", "static"),
-	}, store, nil, nil)
+	}, store, nil, newFakeDeployments())
 	if err != nil {
 		t.Fatalf("NewHandler() error: %v", err)
 	}
@@ -49,30 +93,54 @@ func get(t *testing.T, mux *http.ServeMux, path string) (int, string) {
 	return rec.Code, rec.Body.String()
 }
 
+func assertPage(t *testing.T, mux *http.ServeMux, path string, wantStatus int, want ...string) {
+	t.Helper()
+	status, body := get(t, mux, path)
+	if status != wantStatus {
+		t.Fatalf("%s: estado = %d, se esperaba %d", path, status, wantStatus)
+	}
+	for _, text := range want {
+		if !strings.Contains(body, text) {
+			t.Errorf("%s: la página no contiene %q", path, text)
+		}
+	}
+}
+
 func TestPagesRender(t *testing.T) {
 	mux := newTestServer(t)
 
-	tests := []struct {
-		path string
-		want []string
-	}{
-		{"/", []string{"Dashboard", "paisajes.cloud.local", "224"}},
-		{"/instances", []string{"Mis instancias", "paisajes.cloud.local", "192.168.10.30"}},
-		{"/deploy", []string{"Desplegar nueva aplicación", ".cloud.local"}},
+	assertPage(t, mux, "/", http.StatusOK, "Dashboard", "paisajes.cloud.local", "224")
+	assertPage(t, mux, "/instances", http.StatusOK, "Mis instancias", "paisajes.cloud.local", "192.168.10.30")
+	assertPage(t, mux, "/deploy", http.StatusOK, "Desplegar nueva aplicación", ".cloud.local")
+}
+
+func TestDeploymentPagesRender(t *testing.T) {
+	mux := newTestServer(t)
+
+	assertPage(t, mux, "/deployments/run", http.StatusOK, "Estamos preparando tu aplicación", "/api/deployments/run")
+	assertPage(t, mux, "/deployments/ok", http.StatusOK, "¡Tu aplicación está publicada!", "http://negocios.cloud.local")
+	assertPage(t, mux, "/deployments/fail", http.StatusOK, "No pudimos completar el despliegue",
+		"ERROR EN LA ETAPA 6", "Servidor DNS · Bind9", "/deployments/fail/retry")
+	assertPage(t, mux, "/deployments/no-existe", http.StatusNotFound, "No encontramos este despliegue")
+}
+
+func TestDeploymentStatusAPI(t *testing.T) {
+	mux := newTestServer(t)
+
+	status, body := get(t, mux, "/api/deployments/run")
+	if status != http.StatusOK {
+		t.Fatalf("estado = %d, se esperaba 200", status)
+	}
+	var snap deployment.Snapshot
+	if err := json.Unmarshal([]byte(body), &snap); err != nil {
+		t.Fatalf("respuesta no es JSON válido: %v", err)
+	}
+	if snap.Status != deployment.StatusRunning || snap.Step != deployment.StepWaitBoot {
+		t.Errorf("estado = %s, etapa = %d", snap.Status, snap.Step)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.path, func(t *testing.T) {
-			status, body := get(t, mux, tt.path)
-			if status != http.StatusOK {
-				t.Fatalf("estado = %d, se esperaba 200", status)
-			}
-			for _, want := range tt.want {
-				if !strings.Contains(body, want) {
-					t.Errorf("la página no contiene %q", want)
-				}
-			}
-		})
+	if status, _ := get(t, mux, "/api/deployments/no-existe"); status != http.StatusNotFound {
+		t.Errorf("ID desconocido: estado = %d, se esperaba 404", status)
 	}
 }
 
@@ -98,10 +166,7 @@ func TestFlashMessages(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
-			_, body := get(t, mux, tt.path)
-			if !strings.Contains(body, tt.want) {
-				t.Errorf("la página no contiene %q", tt.want)
-			}
+			assertPage(t, mux, tt.path, http.StatusOK, tt.want)
 		})
 	}
 }

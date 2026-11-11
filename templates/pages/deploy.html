@@ -1,0 +1,95 @@
+{{define "content"}}
+<div class="page-heading">
+    <div>
+        <h1>Desplegar nueva aplicación</h1>
+        <p>Crea una instancia Apache y publica tu sitio web en cuestión de minutos.</p>
+    </div>
+</div>
+
+<form method="post" action="/deploy" enctype="multipart/form-data"
+      data-deploy-form data-domain="{{.Domain}}" data-max-size="{{.MaxUploadBytes}}">
+    <div class="deploy-layout">
+        <div class="deploy-main">
+            <section class="panel form-section">
+                <div class="section-number">1</div>
+                <div class="section-content">
+                    <div class="section-heading">
+                        <h2>Configuración del servicio</h2>
+                        <p>Define la identidad con la que estará disponible tu aplicación.</p>
+                    </div>
+                    <label class="field-label" for="hostname">Nombre del host</label>
+                    <div class="hostname-input">
+                        <input id="hostname" name="hostname" value="{{.Hostname}}" placeholder="mi-aplicacion"
+                               maxlength="63" autocomplete="off" spellcheck="false" required>
+                        <span>.{{.Domain}}</span>
+                    </div>
+                    <p class="field-help">Identificador único para tu instancia. Usa letras minúsculas, números o guiones.</p>
+                    <div class="domain-preview">
+                        <div>{{icon "globe" 18}}</div>
+                        <span>
+                            Tu aplicación estará disponible en
+                            <strong data-preview-url>http://mi-aplicacion.{{.Domain}}</strong>
+                        </span>
+                    </div>
+                </div>
+            </section>
+
+            <section class="panel form-section">
+                <div class="section-number">2</div>
+                <div class="section-content">
+                    <div class="section-heading">
+                        <h2>Contenido de tu aplicación</h2>
+                        <p>Opcional: si no subes un archivo, solo se crea la instancia y puedes publicar después.</p>
+                    </div>
+
+                    <input id="content" name="content" type="file" accept=".zip,application/zip" class="sr-only">
+
+                    <div class="dropzone" data-dropzone>
+                        <div class="upload-icon">{{icon "upload" 25}}</div>
+                        <h3>Arrastra tu archivo ZIP aquí</h3>
+                        <p>o selecciona un archivo desde tu equipo</p>
+                        <label class="secondary-button" for="content" tabindex="0">Seleccionar archivo</label>
+                        <span>Formato ZIP · Tamaño máximo {{.MaxUploadMB}} MB</span>
+                    </div>
+
+                    <div class="selected-file" data-selected-file hidden>
+                        <div class="file-icon">{{icon "file" 22}}</div>
+                        <div class="file-details">
+                            <strong data-file-name></strong>
+                            <span data-file-size></span>
+                        </div>
+                        <div class="file-valid">{{icon "check" 15}} Listo</div>
+                        <button type="button" data-remove-file aria-label="Quitar archivo">{{icon "x" 18}}</button>
+                    </div>
+
+                    <div class="info-note">
+                        {{icon "info" 18}}
+                        <span>El archivo ZIP debe contener un <strong>index.html</strong> en su directorio raíz.</span>
+                    </div>
+                </div>
+            </section>
+
+            <div class="form-error" role="alert" data-form-error {{if not .FormError}}hidden{{end}}>
+                {{icon "info" 18}} <span data-error-text>{{.FormError}}</span>
+            </div>
+            <div class="form-notice" role="status" data-form-notice hidden>
+                {{icon "clock" 18}} <span>Creando la instancia: se inicia la VM y se configura su red. Puede tardar unos 3 minutos; no cierres esta ventana.</span>
+            </div>
+        </div>
+
+        <aside class="deploy-summary panel">
+            <h2>Resumen del despliegue</h2>
+            <div class="summary-row"><span>Servicio</span><strong>Apache HTTP Server</strong></div>
+            <div class="summary-row"><span>Entorno</span><strong>Debian 13</strong></div>
+            <div class="summary-row"><span>Dominio</span><strong data-summary-domain>Sin definir.{{.Domain}}</strong></div>
+            <div class="summary-row"><span>Archivo</span><strong data-summary-file>Sin seleccionar (solo crear)</strong></div>
+            <div class="summary-divider"></div>
+            <button type="submit" class="deploy-button">{{icon "rocket" 18}} <span data-submit-label>Crear instancia</span></button>
+            <p class="summary-caption">
+                {{icon "shield" 15}}
+                <span>Se creará una nueva instancia Apache dentro de la infraestructura {{.Domain}}.</span>
+            </p>
+        </aside>
+    </div>
+</form>
+{{end}}

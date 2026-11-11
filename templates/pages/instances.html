@@ -1,0 +1,49 @@
+{{define "content"}}
+<div class="page-heading">
+    <div>
+        <h1>Mis instancias</h1>
+        <p>Consulta, accede y administra tus servidores HTTP desplegados.</p>
+    </div>
+    <a class="primary-button" href="/deploy">{{icon "plus" 17}} Nueva instancia</a>
+</div>
+
+<section class="panel table-panel">
+    <div class="instances-toolbar">
+        <div class="instance-count">
+            <span>{{len .Instances}}</span>
+            <div>
+                <strong>Instancias</strong>
+                <small>en tu infraestructura</small>
+            </div>
+        </div>
+        {{if .Instances}}
+        <div class="toolbar-actions">
+            <label class="search-box">
+                {{icon "search" 18}}
+                <input type="search" placeholder="Buscar por hostname..." aria-label="Buscar por hostname" data-search>
+                <button type="button" data-search-clear hidden aria-label="Limpiar búsqueda">{{icon "x" 15}}</button>
+            </label>
+        </div>
+        {{end}}
+    </div>
+
+    {{if .Instances}}
+        <div data-search-results>
+            {{template "instances-table" .Instances}}
+        </div>
+        <div class="empty-state" data-search-empty hidden>
+            <div>{{icon "search" 24}}</div>
+            <h3>No encontramos instancias</h3>
+            <p>Prueba con otro nombre o limpia la búsqueda.</p>
+            <button type="button" class="secondary-button" data-search-clear>Limpiar búsqueda</button>
+        </div>
+    {{else}}
+        <div class="empty-state">
+            <div>{{icon "server" 24}}</div>
+            <h3>Aún no hay instancias</h3>
+            <p>Crea tu primera instancia Apache y publica tu sitio web.</p>
+            <a class="secondary-button" href="/deploy">{{icon "plus" 15}} Nueva instancia</a>
+        </div>
+    {{end}}
+</section>
+{{end}}

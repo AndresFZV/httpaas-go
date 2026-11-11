@@ -96,6 +96,7 @@ type Manager struct {
 	provisioner Provisioner
 	deployer    Deployer
 	verifier    Verifier
+	onFinished  func(hostname string)
 }
 
 // NewManager crea un Manager que guarda los .zip pendientes en uploadsDir.
@@ -220,16 +221,40 @@ func (m *Manager) Snapshot(id string) (Snapshot, error) {
 	return snap, nil
 }
 
-// run ejecuta el despliegue desde la etapa from y registra el resultado.
+// ActiveHostnames devuelve los hostnames que tienen un despliegue en curso.
+func (m *Manager) ActiveHostnames() map[string]bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	active := make(map[string]bool)
+	for _, j := range m.jobs {
+		if j.status == StatusRunning {
+			active[j.hostname] = true
+		}
+	}
+	return active
+}
+
+// OnFinished registra una función que se llama cada vez que un despliegue termina, con éxito o con error.
+// Debe registrarse antes de iniciar despliegues.
+func (m *Manager) OnFinished(fn func(hostname string)) {
+	m.onFinished = fn
+}
+
+// run ejecuta el despliegue desde la etapa from, registra el resultado y avisa que terminó.
 func (m *Manager) run(j *job, from int) {
 	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
 	defer cancel()
 
 	if err := m.execute(ctx, j, from); err != nil {
 		m.fail(j, err)
-		return
+	} else {
+		m.succeed(j)
 	}
-	m.succeed(j)
+
+	if m.onFinished != nil {
+		m.onFinished(j.hostname)
+	}
 }
 
 func (m *Manager) execute(ctx context.Context, j *job, from int) error {

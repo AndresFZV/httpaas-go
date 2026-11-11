@@ -12,20 +12,18 @@ import (
 	"time"
 
 	"github.com/AndresFZV/httpaas-go/internal/deployment"
+	"github.com/AndresFZV/httpaas-go/internal/health"
 	"github.com/AndresFZV/httpaas-go/internal/instance"
 )
 
 type fakeDeployments struct {
 	snapshots map[string]deployment.Snapshot
+	active    map[string]bool
 }
 
-func (f fakeDeployments) Start(string, io.Reader, string) (string, error) {
-	return "nuevo", nil
-}
-
-func (f fakeDeployments) Retry(string) (string, error) {
-	return "", deployment.ErrNotRetryable
-}
+func (f fakeDeployments) Start(string, io.Reader, string) (string, error) { return "nuevo", nil }
+func (f fakeDeployments) Retry(string) (string, error)                    { return "", deployment.ErrNotRetryable }
+func (f fakeDeployments) ActiveHostnames() map[string]bool                { return f.active }
 
 func (f fakeDeployments) Snapshot(id string) (deployment.Snapshot, error) {
 	snap, ok := f.snapshots[id]
@@ -34,6 +32,10 @@ func (f fakeDeployments) Snapshot(id string) (deployment.Snapshot, error) {
 	}
 	return snap, nil
 }
+
+type fakeMonitor struct{ snap health.Snapshot }
+
+func (f fakeMonitor) Snapshot() health.Snapshot { return f.snap }
 
 func newFakeDeployments() fakeDeployments {
 	base := deployment.Snapshot{
@@ -51,12 +53,25 @@ func newFakeDeployments() fakeDeployments {
 	failed.Error = deployment.Steps[deployment.StepRegisterDNS].FailMessage
 	failed.Component = deployment.Steps[deployment.StepRegisterDNS].Component
 
-	return fakeDeployments{snapshots: map[string]deployment.Snapshot{
-		"run": running, "ok": succeeded, "fail": failed,
-	}}
+	return fakeDeployments{
+		snapshots: map[string]deployment.Snapshot{"run": running, "ok": succeeded, "fail": failed},
+		active:    map[string]bool{},
+	}
 }
 
-func newTestServer(t *testing.T) *http.ServeMux {
+func healthySnapshot() health.Snapshot {
+	return health.Snapshot{
+		CheckedAt: time.Now(),
+		Components: []health.Component{
+			{Name: "Servidor DNS · Bind9", OK: true, Detail: "Resuelve ns.cloud.local"},
+			{Name: "Acceso SSH a ns", OK: true, Detail: "Puerto 22 disponible"},
+			{Name: "VirtualBox", OK: true, Detail: "Versión 7.2.6"},
+		},
+		Instances: map[string]health.InstanceStatus{"paisajes": health.InstanceActive},
+	}
+}
+
+func newTestServer(t *testing.T, snap health.Snapshot) *http.ServeMux {
 	t.Helper()
 
 	first := netip.MustParseAddr("192.168.10.30")
@@ -76,7 +91,7 @@ func newTestServer(t *testing.T) *http.ServeMux {
 		LastIP:       last,
 		TemplatesDir: filepath.Join("..", "..", "templates"),
 		StaticDir:    filepath.Join("..", "..", "static"),
-	}, store, nil, newFakeDeployments())
+	}, store, nil, newFakeDeployments(), fakeMonitor{snap: snap})
 	if err != nil {
 		t.Fatalf("NewHandler() error: %v", err)
 	}
@@ -107,15 +122,39 @@ func assertPage(t *testing.T, mux *http.ServeMux, path string, wantStatus int, w
 }
 
 func TestPagesRender(t *testing.T) {
-	mux := newTestServer(t)
+	mux := newTestServer(t, healthySnapshot())
 
 	assertPage(t, mux, "/", http.StatusOK, "Dashboard", "paisajes.cloud.local", "224")
 	assertPage(t, mux, "/instances", http.StatusOK, "Mis instancias", "paisajes.cloud.local", "192.168.10.30")
 	assertPage(t, mux, "/deploy", http.StatusOK, "Desplegar nueva aplicación", ".cloud.local")
 }
 
+func TestHealthyInfrastructure(t *testing.T) {
+	mux := newTestServer(t, healthySnapshot())
+
+	assertPage(t, mux, "/", http.StatusOK,
+		"Todos los sistemas operativos", "Operativa", "Plataforma operativa", "Activa", "100% responden por HTTP")
+}
+
+func TestFailingInfrastructure(t *testing.T) {
+	snap := healthySnapshot()
+	snap.Components[0].OK = false
+	snap.Instances["paisajes"] = health.InstanceUnreachable
+
+	mux := newTestServer(t, snap)
+
+	assertPage(t, mux, "/", http.StatusOK,
+		"Infraestructura con fallas", "Con fallas", "Plataforma con fallas", "Servidor DNS · Bind9", "Sin respuesta")
+}
+
+func TestInstanceNotCheckedYet(t *testing.T) {
+	mux := newTestServer(t, health.Snapshot{})
+
+	assertPage(t, mux, "/instances", http.StatusOK, "Verificando")
+}
+
 func TestDeploymentPagesRender(t *testing.T) {
-	mux := newTestServer(t)
+	mux := newTestServer(t, healthySnapshot())
 
 	assertPage(t, mux, "/deployments/run", http.StatusOK, "Estamos preparando tu aplicación", "/api/deployments/run")
 	assertPage(t, mux, "/deployments/ok", http.StatusOK, "¡Tu aplicación está publicada!", "http://negocios.cloud.local")
@@ -125,7 +164,7 @@ func TestDeploymentPagesRender(t *testing.T) {
 }
 
 func TestDeploymentStatusAPI(t *testing.T) {
-	mux := newTestServer(t)
+	mux := newTestServer(t, healthySnapshot())
 
 	status, body := get(t, mux, "/api/deployments/run")
 	if status != http.StatusOK {
@@ -145,14 +184,14 @@ func TestDeploymentStatusAPI(t *testing.T) {
 }
 
 func TestUnknownPathReturnsNotFound(t *testing.T) {
-	status, _ := get(t, newTestServer(t), "/no-existe")
+	status, _ := get(t, newTestServer(t, healthySnapshot()), "/no-existe")
 	if status != http.StatusNotFound {
 		t.Errorf("estado = %d, se esperaba 404", status)
 	}
 }
 
 func TestFlashMessages(t *testing.T) {
-	mux := newTestServer(t)
+	mux := newTestServer(t, healthySnapshot())
 
 	tests := []struct {
 		path string
@@ -172,7 +211,7 @@ func TestFlashMessages(t *testing.T) {
 }
 
 func TestFlashMessagesIgnoreInvalidHostname(t *testing.T) {
-	_, body := get(t, newTestServer(t), "/instances?created=%3Cscript%3E")
+	_, body := get(t, newTestServer(t, healthySnapshot()), "/instances?created=%3Cscript%3E")
 	if strings.Contains(body, "creada") {
 		t.Error("se mostró un aviso con un hostname inválido")
 	}
@@ -191,5 +230,8 @@ func TestTemplateHelpers(t *testing.T) {
 	}
 	if got := ipCount(netip.MustParseAddr("192.168.10.30"), netip.MustParseAddr("192.168.10.254")); got != 225 {
 		t.Errorf("ipCount() = %d, se esperaba 225", got)
+	}
+	if got := ago(time.Now().Add(-5 * time.Minute)); got != "hace 5 minutos" {
+		t.Errorf("ago() = %q", got)
 	}
 }

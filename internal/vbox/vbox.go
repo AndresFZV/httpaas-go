@@ -100,6 +100,15 @@ func (m *Manager) DeleteVM(ctx context.Context, name string) error {
 	return fmt.Errorf("borrar VM %s: %w", name, err)
 }
 
+// Version devuelve la versión de VirtualBox; sirve para comprobar que VBoxManage responde.
+func (m *Manager) Version(ctx context.Context) (string, error) {
+	out, err := m.run(ctx, "--version")
+	if err != nil {
+		return "", fmt.Errorf("VBoxManage --version: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // exec ejecuta VBoxManage y traduce el error de objeto inexistente a ErrVMNotFound.
 func (m *Manager) exec(ctx context.Context, args ...string) error {
 	out, err := m.run(ctx, args...)

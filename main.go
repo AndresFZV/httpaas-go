@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"net/netip"
@@ -10,6 +11,7 @@ import (
 	"github.com/AndresFZV/httpaas-go/internal/deploy"
 	"github.com/AndresFZV/httpaas-go/internal/deployment"
 	"github.com/AndresFZV/httpaas-go/internal/dns"
+	"github.com/AndresFZV/httpaas-go/internal/health"
 	"github.com/AndresFZV/httpaas-go/internal/hostnet"
 	"github.com/AndresFZV/httpaas-go/internal/instance"
 	"github.com/AndresFZV/httpaas-go/internal/provision"
@@ -23,6 +25,9 @@ const apacheWebRoot = "/var/www/html"
 
 // dnsKeyFile es la clave TSIG de Bind9 dentro del servidor ns.
 const dnsKeyFile = "/etc/bind/cloud-key.key"
+
+// healthInterval es cada cuánto se verifica la infraestructura y las instancias.
+const healthInterval = 15 * time.Second
 
 func main() {
 	cfg, err := loadConfig()
@@ -70,6 +75,19 @@ func main() {
 		log.Fatalf("no se pudo preparar los despliegues: %v", err)
 	}
 
+	monitor := health.NewMonitor(health.Config{
+		DNSServer: cfg.DNSServer,
+		Domain:    instance.Domain,
+		Interval:  healthInterval,
+	}, store, vms)
+	monitor.Start(context.Background())
+
+	// Al terminar un despliegue se verifica de inmediato, para que el estado de la instancia nueva
+	// no espere a la siguiente verificación periódica.
+	deployments.OnFinished(func(string) {
+		go monitor.Check(context.Background())
+	})
+
 	handler, err := web.NewHandler(web.Config{
 		Domain:       instance.Domain,
 		DNSServer:    cfg.DNSServer.String(),
@@ -77,7 +95,7 @@ func main() {
 		LastIP:       lastIP,
 		TemplatesDir: "templates",
 		StaticDir:    "static",
-	}, store, provisioner, deployments)
+	}, store, provisioner, deployments, monitor)
 	if err != nil {
 		log.Fatalf("no se pudo inicializar la aplicación: %v", err)
 	}

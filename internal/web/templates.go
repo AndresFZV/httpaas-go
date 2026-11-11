@@ -22,6 +22,7 @@ var templateFuncs = template.FuncMap{
 	"displayName": displayName,
 	"formatDate":  formatDate,
 	"inc":         func(i int) int { return i + 1 },
+	"ago":         ago,
 }
 
 // loadPages crea un conjunto de plantillas por página: layout + partials + la página.
@@ -78,4 +79,23 @@ func displayName(hostname string) string {
 func formatDate(t time.Time) string {
 	t = t.Local()
 	return fmt.Sprintf("%d %s %d, %02d:%02d", t.Day(), spanishMonths[t.Month()-1], t.Year(), t.Hour(), t.Minute())
+}
+
+// ago describe cuánto tiempo pasó desde t: "hace unos segundos", "hace 3 minutos".
+func ago(t time.Time) string {
+	if t.IsZero() {
+		return "pendiente"
+	}
+
+	elapsed := time.Since(t)
+	switch {
+	case elapsed < time.Minute:
+		return "hace unos segundos"
+	case elapsed < 2*time.Minute:
+		return "hace 1 minuto"
+	case elapsed < time.Hour:
+		return fmt.Sprintf("hace %d minutos", int(elapsed.Minutes()))
+	default:
+		return formatDate(t)
+	}
 }

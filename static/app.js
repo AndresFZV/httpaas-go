@@ -77,35 +77,40 @@
     });
   }
 
-  // Buscador de instancias por hostname.
+  // Buscador por hostname y filtro por estado.
   const search = document.querySelector("[data-search]");
   if (search) {
+    const statusFilter = document.querySelector("[data-status-filter]");
     const items = document.querySelectorAll("[data-instance]");
     const empty = document.querySelector("[data-search-empty]");
-    const table = document.querySelector("[data-search-results]");
+    const results = document.querySelector("[data-search-results]");
     const clearButtons = document.querySelectorAll("[data-search-clear]");
 
-    function applySearch() {
+    function applyFilters() {
       const query = search.value.trim().toLowerCase();
+      const status = statusFilter ? statusFilter.value : "";
       let visible = 0;
 
       items.forEach((item) => {
-        const match = item.dataset.instance.includes(query);
+        const match = item.dataset.instance.includes(query)
+          && (status === "" || item.dataset.status === status);
         item.hidden = !match;
         if (match) visible++;
       });
 
       if (empty) empty.hidden = visible > 0;
-      if (table) table.hidden = visible === 0;
+      if (results) results.hidden = visible === 0;
       clearButtons.forEach((button) => {
         if (button.closest(".search-box")) button.hidden = query === "";
       });
     }
 
-    search.addEventListener("input", applySearch);
+    search.addEventListener("input", applyFilters);
+    statusFilter?.addEventListener("change", applyFilters);
     clearButtons.forEach((button) => button.addEventListener("click", () => {
       search.value = "";
-      applySearch();
+      if (statusFilter) statusFilter.value = "";
+      applyFilters();
       search.focus();
     }));
   }

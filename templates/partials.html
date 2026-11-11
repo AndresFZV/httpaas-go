@@ -30,14 +30,29 @@
                 <td>
                     <div class="row-actions">
                         <a class="icon-button" href="{{.URL}}" target="_blank" rel="noopener" title="Abrir aplicación">{{icon "external" 17}}</a>
-                        {{if ne .Status "creating"}}
+                        {{if .CanStart}}
+                        <form class="inline-form" method="post" action="/instances/{{.Hostname}}/power/start" data-power-form>
+                            <button type="submit" class="icon-button success" title="Encender">{{icon "power" 17}}</button>
+                        </form>
+                        {{end}}
+                        {{if .CanControl}}
                         <button type="button" class="icon-button" title="Publicar contenido"
                                 data-publish data-hostname="{{.Hostname}}" data-fqdn="{{.FQDN}}">{{icon "upload" 17}}</button>
+                        <form class="inline-form" method="post" action="/instances/{{.Hostname}}/power/restart"
+                              data-power-form data-confirm="¿Reiniciar la instancia {{.Hostname}}? Estará fuera de servicio un minuto.">
+                            <button type="submit" class="icon-button" title="Reiniciar">{{icon "refresh" 17}}</button>
+                        </form>
+                        <form class="inline-form" method="post" action="/instances/{{.Hostname}}/power/stop"
+                              data-power-form data-confirm="¿Apagar la instancia {{.Hostname}}? Su página dejará de estar disponible.">
+                            <button type="submit" class="icon-button danger" title="Apagar">{{icon "power" 17}}</button>
+                        </form>
                         {{end}}
                         <button type="button" class="icon-button" data-copy="{{.URL}}" title="Copiar URL">{{icon "copy" 17}}</button>
+                        {{if .CanDelete}}
                         <button type="button" class="icon-button danger" title="Eliminar instancia"
                                 data-delete data-hostname="{{.Hostname}}" data-name="{{displayName .Hostname}}"
                                 data-fqdn="{{.FQDN}}" data-ip="{{.IP}}">{{icon "trash" 17}}</button>
+                        {{end}}
                     </div>
                 </td>
             </tr>
@@ -65,13 +80,28 @@
         </div>
         <div class="mobile-instance-actions">
             <a href="{{.URL}}" target="_blank" rel="noopener">{{icon "external" 16}} Abrir</a>
-            {{if ne .Status "creating"}}
+            {{if .CanStart}}
+            <form method="post" action="/instances/{{.Hostname}}/power/start" data-power-form>
+                <button type="submit">{{icon "power" 16}} Encender</button>
+            </form>
+            {{end}}
+            {{if .CanControl}}
             <button type="button" data-publish data-hostname="{{.Hostname}}" data-fqdn="{{.FQDN}}">{{icon "upload" 16}} Publicar</button>
+            <form method="post" action="/instances/{{.Hostname}}/power/restart"
+                  data-power-form data-confirm="¿Reiniciar la instancia {{.Hostname}}? Estará fuera de servicio un minuto.">
+                <button type="submit">{{icon "refresh" 16}} Reiniciar</button>
+            </form>
+            <form method="post" action="/instances/{{.Hostname}}/power/stop"
+                  data-power-form data-confirm="¿Apagar la instancia {{.Hostname}}? Su página dejará de estar disponible.">
+                <button type="submit" class="danger-text">{{icon "power" 16}} Apagar</button>
+            </form>
             {{end}}
             <button type="button" data-copy="{{.URL}}">{{icon "copy" 16}} Copiar</button>
+            {{if .CanDelete}}
             <button type="button" class="danger-text"
                     data-delete data-hostname="{{.Hostname}}" data-name="{{displayName .Hostname}}"
                     data-fqdn="{{.FQDN}}" data-ip="{{.IP}}">{{icon "trash" 16}} Eliminar</button>
+            {{end}}
         </div>
     </article>
     {{end}}

@@ -30,6 +30,7 @@ type config struct {
 	SSHPath      string     // HTTPAAS_SSH
 	TemplateDisk string     // HTTPAAS_TEMPLATE_DISK
 	HostOnlyIF   string     // HTTPAAS_HOSTONLY_IF
+	NSVMName     string     // HTTPAAS_NS_VM
 	SSHUser      string     // HTTPAAS_SSH_USER
 	SSHKey       string     // HTTPAAS_SSH_KEY
 	TemplateIP   netip.Addr // HTTPAAS_TEMPLATE_IP
@@ -59,6 +60,7 @@ func loadConfig() (config, error) {
 		SSHPath:      getEnv("HTTPAAS_SSH", defaultSSH()),
 		TemplateDisk: getEnv("HTTPAAS_TEMPLATE_DISK", `C:\HTTPaaS\ApacheServer.vdi`),
 		HostOnlyIF:   getEnv("HTTPAAS_HOSTONLY_IF", "VirtualBox Host-Only Ethernet Adapter"),
+		NSVMName:     getEnv("HTTPAAS_NS_VM", "debian ns"),
 		SSHUser:      getEnv("HTTPAAS_SSH_USER", "deploy"),
 		SSHKey:       getEnv("HTTPAAS_SSH_KEY", filepath.Join(home, ".ssh", "httpaas")),
 		TemplateIP:   templateIP,
@@ -74,6 +76,7 @@ func (c config) logSummary() {
 	log.Printf("IP temporal de la plantilla: %s, servidor DNS: %s", c.TemplateIP, c.DNSServer)
 	log.Printf("SSH: %s con llave %s", c.SSHUser, c.SSHKey)
 	log.Printf("cliente SSH: %s", c.SSHPath)
+	log.Printf("VM del servidor DNS: %s", c.NSVMName)
 
 	for name, path := range map[string]string{
 		"VBoxManage":      c.VBoxManage,

@@ -85,9 +85,10 @@ type VirtualBox interface {
 
 // Config son los parámetros del monitor.
 type Config struct {
-	DNSServer netip.Addr
-	Domain    string
-	Interval  time.Duration
+	DNSServer    netip.Addr
+	Domain       string
+	Interval     time.Duration
+	FastInterval time.Duration // intervalo mientras haya algo en transición
 }
 
 // Monitor verifica la infraestructura cada cierto tiempo y guarda el último resultado.
@@ -97,6 +98,8 @@ type Monitor struct {
 	vbox        VirtualBox
 	client      *http.Client
 	instanceURL func(netip.Addr) string
+	busy        func() bool // indica si hay algo en transición; se registra antes de Start
+	checkMu     sync.Mutex  // evita dos verificaciones simultáneas y líneas de log duplicadas
 
 	mu   sync.RWMutex
 	snap Snapshot
@@ -113,19 +116,28 @@ func NewMonitor(cfg Config, instances InstanceLister, vbox VirtualBox) *Monitor 
 	}
 }
 
-// Start verifica de inmediato y luego cada cfg.Interval, hasta que ctx se cancele.
+// SetBusyCheck registra una función que indica si hay acciones o despliegues en curso.
+// Mientras devuelva true, el monitor verifica cada FastInterval. Debe llamarse antes de Start.
+func (m *Monitor) SetBusyCheck(busy func() bool) {
+	m.busy = busy
+}
+
+// Start verifica de inmediato y luego periódicamente, hasta que ctx se cancele.
+// Usa FastInterval mientras haya algo en transición, para detectar los cambios en pocos segundos.
 func (m *Monitor) Start(ctx context.Context) {
 	go func() {
-		m.Check(ctx)
-
-		ticker := time.NewTicker(m.cfg.Interval)
-		defer ticker.Stop()
 		for {
+			m.Check(ctx)
+
+			wait := m.cfg.Interval
+			if m.busy != nil && m.busy() && m.cfg.FastInterval > 0 {
+				wait = m.cfg.FastInterval
+			}
+
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
-				m.Check(ctx)
+			case <-time.After(wait):
 			}
 		}
 	}()
@@ -143,8 +155,12 @@ func (m *Monitor) Snapshot() Snapshot {
 	return snap
 }
 
-// Check verifica en paralelo la infraestructura y todas las instancias, y guarda el resultado.
+// Check verifica en paralelo la infraestructura y todas las instancias, guarda el resultado
+// y registra en el log lo que cambió desde la verificación anterior.
 func (m *Monitor) Check(ctx context.Context) {
+	m.checkMu.Lock()
+	defer m.checkMu.Unlock()
+
 	var wg sync.WaitGroup
 
 	var dns, ssh, vbox Component
@@ -173,15 +189,20 @@ func (m *Monitor) Check(ctx context.Context) {
 		instances[inst.Hostname] = statuses[i]
 	}
 
-	m.mu.Lock()
-	m.snap = Snapshot{
+	snap := Snapshot{
 		CheckedAt:  time.Now(),
 		Components: []Component{dns, ssh, vbox},
 		Instances:  instances,
 		VMs:        vms,
 		VMsKnown:   vmsKnown,
 	}
+
+	m.mu.Lock()
+	previous := m.snap
+	m.snap = snap
 	m.mu.Unlock()
+
+	logChanges(previous, snap)
 }
 
 // checkDNS consulta directamente a ns por ns.<dominio>, sin pasar por el DNS del anfitrión.

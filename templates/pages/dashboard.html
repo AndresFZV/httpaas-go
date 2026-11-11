@@ -69,9 +69,24 @@
             <span>{{range $i, $c := .Health.Components}}{{if $i}} · {{end}}{{$c.Name}}: {{$c.Detail}}{{end}}</span>
         {{else}}
             <strong>Plataforma con fallas</strong>
-            <span>Sin respuesta: {{range $i, $name := .Health.Failing}}{{if $i}}, {{end}}{{$name}}{{end}}. Los despliegues pueden fallar hasta que se resuelva.</span>
+            <span>
+                Sin respuesta: {{range $i, $name := .Health.Failing}}{{if $i}}, {{end}}{{$name}}{{end}}.
+                {{if .NS.CanStart}}La VM del servidor DNS está apagada.{{else}}Los despliegues pueden fallar hasta que se resuelva.{{end}}
+            </span>
         {{end}}
     </div>
+    {{if .NS.CanStart}}
+        <form method="post" action="/infrastructure/ns/power/start" data-power-form>
+            <button type="submit" class="primary-button">{{icon "power" 16}} Encender ns</button>
+        </form>
+    {{else if .NS.CanRestart}}
+        <form method="post" action="/infrastructure/ns/power/restart" data-power-form
+              data-confirm="¿Reiniciar el servidor DNS? Los despliegues en curso podrían fallar.">
+            <button type="submit" class="secondary-button">{{icon "refresh" 16}} Reiniciar ns</button>
+        </form>
+    {{else if .NS.Transitional}}
+        <span class="live-config"><i></i> {{.NS.TransitionLabel}}</span>
+    {{end}}
     <div class="platform-meta">
         <span>Última verificación</span>
         <strong>{{ago .Health.CheckedAt}}</strong>

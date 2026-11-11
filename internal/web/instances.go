@@ -13,6 +13,7 @@ import (
 	"github.com/AndresFZV/httpaas-go/internal/deploy"
 	"github.com/AndresFZV/httpaas-go/internal/deployment"
 	"github.com/AndresFZV/httpaas-go/internal/instance"
+	"github.com/AndresFZV/httpaas-go/internal/power"
 )
 
 const (
@@ -29,6 +30,9 @@ var (
 	errStartFailed  = errors.New("no se pudo iniciar el despliegue; revise el log del servidor")
 	errDeleteFailed = errors.New("no se pudo eliminar la instancia; revise el log del servidor")
 )
+
+// deploymentBusy es el error para acciones sobre una instancia con un despliegue en curso.
+var deploymentBusy = deployment.ErrBusy
 
 // validationErrors son los errores de datos inválidos enviados por el usuario.
 var validationErrors = []error{
@@ -145,6 +149,11 @@ func (h *Handler) deleteInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if p, ok := h.power.Pending()[hostname]; ok && p.Action == power.ActionStop {
+		h.renderInstancesError(w, r, power.ErrInProgress)
+		return
+	}
+
 	ctx, cancel := backgroundContext(r, deleteTimeout)
 	defer cancel()
 
@@ -221,15 +230,15 @@ func statusFor(err error) (status int, known bool) {
 	switch {
 	case errors.Is(err, deploy.ErrArchiveTooLarge):
 		return http.StatusRequestEntityTooLarge, true
-	case errors.Is(err, errInvalidForm):
+	case errors.Is(err, errInvalidForm), errors.Is(err, power.ErrUnknownAction):
 		return http.StatusBadRequest, true
-	case errors.Is(err, instance.ErrHostnameTaken), errors.Is(err, deployment.ErrBusy):
+	case errors.Is(err, instance.ErrHostnameTaken), errors.Is(err, deployment.ErrBusy), errors.Is(err, power.ErrInProgress):
 		return http.StatusConflict, true
 	case errors.Is(err, instance.ErrNotFound):
 		return http.StatusNotFound, true
 	case errors.Is(err, instance.ErrNoFreeIP):
 		return http.StatusServiceUnavailable, true
-	case errors.Is(err, errStartFailed), errors.Is(err, errDeleteFailed):
+	case errors.Is(err, errStartFailed), errors.Is(err, errDeleteFailed), errors.Is(err, errPowerFailed):
 		return http.StatusInternalServerError, true
 	}
 

@@ -17,6 +17,7 @@ import (
 	"github.com/AndresFZV/httpaas-go/internal/deployment"
 	"github.com/AndresFZV/httpaas-go/internal/health"
 	"github.com/AndresFZV/httpaas-go/internal/instance"
+	"github.com/AndresFZV/httpaas-go/internal/power"
 )
 
 const recentLimit = 5
@@ -38,10 +39,10 @@ type Provisioner interface {
 // Deployments ejecuta despliegues en segundo plano y permite consultar su estado.
 type Deployments interface {
 	Start(hostname string, archive io.Reader, archiveName string) (string, error)
+	Publish(hostname string, ip netip.Addr, archive io.Reader, archiveName string) (string, error)
 	Retry(id string) (string, error)
 	Snapshot(id string) (deployment.Snapshot, error)
 	ActiveHostnames() map[string]bool
-	Publish(hostname string, ip netip.Addr, archive io.Reader, archiveName string) (string, error)
 }
 
 // HealthMonitor entrega el resultado de la última verificación de la infraestructura.
@@ -49,14 +50,30 @@ type HealthMonitor interface {
 	Snapshot() health.Snapshot
 }
 
+// PowerController enciende, apaga y reinicia VMs, y entrega las acciones en curso.
+type PowerController interface {
+	Do(ctx context.Context, name string, action power.Action) error
+	Pending() map[string]power.Pending
+}
+
 // Config son los datos de la infraestructura que muestra la interfaz y las rutas de sus archivos.
 type Config struct {
 	Domain       string
 	DNSServer    string
+	NSVMName     string
 	FirstIP      netip.Addr
 	LastIP       netip.Addr
 	TemplatesDir string
 	StaticDir    string
+}
+
+// Deps son los servicios que usa la interfaz.
+type Deps struct {
+	Store       *instance.Store
+	Provisioner Provisioner
+	Deployments Deployments
+	Monitor     HealthMonitor
+	Power       PowerController
 }
 
 // Handler agrupa las dependencias de los handlers HTTP de la aplicación.
@@ -66,11 +83,12 @@ type Handler struct {
 	provisioner Provisioner
 	deployments Deployments
 	monitor     HealthMonitor
+	power       PowerController
 	pages       map[string]*template.Template
 }
 
 // NewHandler carga las páginas de la interfaz y prepara los handlers.
-func NewHandler(cfg Config, store *instance.Store, provisioner Provisioner, deployments Deployments, monitor HealthMonitor) (*Handler, error) {
+func NewHandler(cfg Config, deps Deps) (*Handler, error) {
 	pages, err := loadPages(cfg.TemplatesDir)
 	if err != nil {
 		return nil, err
@@ -78,10 +96,11 @@ func NewHandler(cfg Config, store *instance.Store, provisioner Provisioner, depl
 
 	return &Handler{
 		cfg:         cfg,
-		store:       store,
-		provisioner: provisioner,
-		deployments: deployments,
-		monitor:     monitor,
+		store:       deps.Store,
+		provisioner: deps.Provisioner,
+		deployments: deps.Deployments,
+		monitor:     deps.Monitor,
+		power:       deps.Power,
 		pages:       pages,
 	}, nil
 }
@@ -97,9 +116,12 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /deploy", h.deploy)
 	mux.HandleFunc("GET /deployments/{id}", h.deploymentPage)
 	mux.HandleFunc("POST /deployments/{id}/retry", h.retryDeployment)
-	mux.HandleFunc("GET /api/deployments/{id}", h.deploymentStatus)
 	mux.HandleFunc("POST /instances/{hostname}/delete", h.deleteInstance)
 	mux.HandleFunc("POST /instances/{hostname}/publish", h.publishInstance)
+	mux.HandleFunc("POST /instances/{hostname}/power/{action}", h.instancePower)
+	mux.HandleFunc("POST /infrastructure/ns/power/{action}", h.nsPower)
+	mux.HandleFunc("GET /api/deployments/{id}", h.deploymentStatus)
+	mux.HandleFunc("GET /api/status", h.statusAPI)
 }
 
 // stats son los números de las tarjetas del dashboard.
@@ -123,6 +145,7 @@ type pageData struct {
 	Recent    []instanceView
 	Stats     stats
 	Health    healthView
+	NS        nsView
 
 	Error string // error general, se muestra arriba de la página
 	Toast string // aviso flotante
@@ -135,6 +158,14 @@ type pageData struct {
 	Deployment *deployment.Snapshot // despliegue que muestra la página de progreso
 	Steps      []deployment.Step
 	StepIndex  map[string]int
+}
+
+// currentState combina la última verificación con los despliegues y las acciones en curso.
+func (h *Handler) currentState() (health.Snapshot, []instanceView, nsView) {
+	snap := h.monitor.Snapshot()
+	pending := h.power.Pending()
+	views := instanceViews(h.store.List(), snap, h.deployments.ActiveHostnames(), pending)
+	return snap, views, newNSView(h.cfg.NSVMName, snap, pending)
 }
 
 func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
@@ -153,8 +184,7 @@ func (h *Handler) deployForm(w http.ResponseWriter, r *http.Request) {
 
 // newPage arma los datos comunes de una página, incluidos los avisos que llegan por la URL.
 func (h *Handler) newPage(r *http.Request, page, breadcrumb string) pageData {
-	snap := h.monitor.Snapshot()
-	views := instanceViews(h.store.List(), snap, h.deployments.ActiveHostnames())
+	snap, views, ns := h.currentState()
 	capacity := ipCount(h.cfg.FirstIP, h.cfg.LastIP)
 	toast, errMsg := flashMessages(r.URL.Query())
 
@@ -171,6 +201,7 @@ func (h *Handler) newPage(r *http.Request, page, breadcrumb string) pageData {
 		DNSServer:  h.cfg.DNSServer,
 		Instances:  views,
 		Health:     newHealthView(snap),
+		NS:         ns,
 		Stats: stats{
 			Total:         len(views),
 			Active:        active,
@@ -212,7 +243,7 @@ func (h *Handler) render(w http.ResponseWriter, status int, data pageData) {
 }
 
 // flashMessages traduce los parámetros de la URL que dejan las redirecciones en avisos.
-// Solo acepta hostnames válidos, para que un enlace no pueda mostrar texto arbitrario.
+// Solo acepta hostnames válidos y valores conocidos, para que un enlace no pueda mostrar texto arbitrario.
 func flashMessages(query url.Values) (toast, errMsg string) {
 	hostname := func(key string) string {
 		name := instance.NormalizeHostname(query.Get(key))
@@ -222,13 +253,28 @@ func flashMessages(query url.Values) (toast, errMsg string) {
 		return name
 	}
 
-	if name := hostname("created"); name != "" {
-		toast = fmt.Sprintf("Instancia %s creada", name)
-		if query.Get("published") == "1" {
-			toast += " y contenido publicado"
+	messages := []struct{ key, format string }{
+		{"created", "Instancia %s creada"},
+		{"deleted", "Instancia %s eliminada"},
+		{"start", "Encendiendo %s; responderá en aproximadamente un minuto"},
+		{"stop", "Apagando %s"},
+		{"restart", "Reiniciando %s; responderá en aproximadamente un minuto"},
+	}
+	for _, m := range messages {
+		if name := hostname(m.key); name != "" {
+			toast = fmt.Sprintf(m.format, name)
+			if m.key == "created" && query.Get("published") == "1" {
+				toast += " y contenido publicado"
+			}
+			break
 		}
-	} else if name := hostname("deleted"); name != "" {
-		toast = fmt.Sprintf("Instancia %s eliminada", name)
+	}
+
+	switch query.Get("ns") {
+	case "start":
+		toast = "Encendiendo el servidor DNS; estará listo en aproximadamente un minuto"
+	case "restart":
+		toast = "Reiniciando el servidor DNS; estará listo en aproximadamente un minuto"
 	}
 
 	if name := hostname("publish_failed"); name != "" {

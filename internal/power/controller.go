@@ -19,6 +19,20 @@ const (
 	ActionRestart Action = "restart"
 )
 
+// Label devuelve la acción en español, para los mensajes.
+func (a Action) Label() string {
+	switch a {
+	case ActionStart:
+		return "encender"
+	case ActionStop:
+		return "apagar"
+	case ActionRestart:
+		return "reiniciar"
+	default:
+		return string(a)
+	}
+}
+
 var (
 	ErrInProgress    = errors.New("ya hay una acción en curso para esta máquina virtual; espera a que termine")
 	ErrUnknownAction = errors.New("acción no válida")
@@ -87,16 +101,25 @@ func (c *Controller) OnChange(fn func()) {
 // Apagar corre en segundo plano, porque espera a que el sistema operativo termine de apagarse.
 func (c *Controller) Do(ctx context.Context, name string, action Action) error {
 	if !c.reserve(name) {
+		log.Printf("[energía] %s: se rechazó %s porque hay otra acción en curso", name, action.Label())
 		return ErrInProgress
 	}
 
 	switch action {
 	case ActionStart, ActionRestart:
 		err := c.run(ctx, name, action)
+		if err != nil {
+			log.Printf("[energía] %s: no se pudo %s: %v", name, action.Label(), err)
+		} else if action == ActionStart {
+			log.Printf("[energía] %s: encendido enviado", name)
+		} else {
+			log.Printf("[energía] %s: reinicio enviado", name)
+		}
 		c.finish(name, action, err == nil)
 		return err
 	case ActionStop:
 		c.remember(name, ActionStop)
+		log.Printf("[energía] %s: apagado ordenado solicitado", name)
 		go c.stop(name)
 		return nil
 	default:
@@ -131,17 +154,30 @@ func (c *Controller) run(ctx context.Context, name string, action Action) error 
 }
 
 // stop pide un apagado ordenado y, si la VM no se apaga a tiempo, lo fuerza.
+// Si la VM ya estaba apagada, no hay nada que hacer.
 func (c *Controller) stop(name string) {
 	ctx, cancel := context.WithTimeout(context.Background(), c.shutdownTimeout+commandTimeout)
 	defer cancel()
 
-	if err := c.vms.ShutdownVM(ctx, name); err != nil {
-		log.Printf("apagado ordenado de %s: %v", name, err)
-	}
-	if !c.waitStopped(ctx, name) {
-		log.Printf("%s no se apagó en %s; se fuerza el apagado", name, c.shutdownTimeout)
-		if err := c.vms.PowerOffVM(ctx, name); err != nil {
-			log.Printf("forzar apagado de %s: %v", name, err)
+	started := time.Now()
+	running, err := c.vms.RunningVMs(ctx)
+
+	switch {
+	case err == nil && !running[name]:
+		log.Printf("[energía] %s: ya estaba apagada", name)
+	default:
+		if err := c.vms.ShutdownVM(ctx, name); err != nil {
+			log.Printf("[energía] %s: error en el apagado ordenado: %v", name, err)
+		}
+		if c.waitStopped(ctx, name) {
+			log.Printf("[energía] %s: apagada correctamente en %s", name, time.Since(started).Round(time.Second))
+		} else {
+			log.Printf("[energía] %s: no respondió al apagado ordenado en %s; se fuerza el apagado", name, c.shutdownTimeout)
+			if err := c.vms.PowerOffVM(ctx, name); err != nil {
+				log.Printf("[energía] %s: no se pudo forzar el apagado: %v", name, err)
+			} else {
+				log.Printf("[energía] %s: apagado forzado completado", name)
+			}
 		}
 	}
 

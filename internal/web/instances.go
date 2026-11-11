@@ -75,7 +75,7 @@ func (h *Handler) deploy(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	log.Printf("aprovisionando %s...", hostname)
-	inst, err := h.provisioner.Provision(ctx, hostname)
+	inst, err := h.provisioner.Provision(ctx, hostname, nil)
 	if err != nil {
 		h.renderDeployError(w, r, hostname, infrastructureError(err, errProvisionFailed, "aprovisionar "+hostname))
 		return

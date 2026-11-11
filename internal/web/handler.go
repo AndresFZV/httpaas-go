@@ -15,13 +15,14 @@ import (
 
 	"github.com/AndresFZV/httpaas-go/internal/deploy"
 	"github.com/AndresFZV/httpaas-go/internal/instance"
+	"github.com/AndresFZV/httpaas-go/internal/provision"
 )
 
 const recentLimit = 5
 
 // Provisioner crea y elimina instancias completas (VM, red y DNS).
 type Provisioner interface {
-	Provision(ctx context.Context, hostname string) (instance.Instance, error)
+	Provision(ctx context.Context, hostname string, report provision.ReportFunc) (instance.Instance, error)
 	Delete(ctx context.Context, hostname string) error
 }
 

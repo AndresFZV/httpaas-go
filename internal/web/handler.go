@@ -15,6 +15,7 @@ import (
 
 	"github.com/AndresFZV/httpaas-go/internal/deploy"
 	"github.com/AndresFZV/httpaas-go/internal/deployment"
+	"github.com/AndresFZV/httpaas-go/internal/health"
 	"github.com/AndresFZV/httpaas-go/internal/instance"
 )
 
@@ -39,6 +40,12 @@ type Deployments interface {
 	Start(hostname string, archive io.Reader, archiveName string) (string, error)
 	Retry(id string) (string, error)
 	Snapshot(id string) (deployment.Snapshot, error)
+	ActiveHostnames() map[string]bool
+}
+
+// HealthMonitor entrega el resultado de la última verificación de la infraestructura.
+type HealthMonitor interface {
+	Snapshot() health.Snapshot
 }
 
 // Config son los datos de la infraestructura que muestra la interfaz y las rutas de sus archivos.
@@ -57,11 +64,12 @@ type Handler struct {
 	store       *instance.Store
 	provisioner Provisioner
 	deployments Deployments
+	monitor     HealthMonitor
 	pages       map[string]*template.Template
 }
 
 // NewHandler carga las páginas de la interfaz y prepara los handlers.
-func NewHandler(cfg Config, store *instance.Store, provisioner Provisioner, deployments Deployments) (*Handler, error) {
+func NewHandler(cfg Config, store *instance.Store, provisioner Provisioner, deployments Deployments, monitor HealthMonitor) (*Handler, error) {
 	pages, err := loadPages(cfg.TemplatesDir)
 	if err != nil {
 		return nil, err
@@ -72,6 +80,7 @@ func NewHandler(cfg Config, store *instance.Store, provisioner Provisioner, depl
 		store:       store,
 		provisioner: provisioner,
 		deployments: deployments,
+		monitor:     monitor,
 		pages:       pages,
 	}, nil
 }
@@ -93,10 +102,12 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 // stats son los números de las tarjetas del dashboard.
 type stats struct {
-	Total      int
-	FreeIPs    int
-	IPCapacity int
-	IPRange    string
+	Total         int
+	Active        int
+	ActivePercent int
+	FreeIPs       int
+	IPCapacity    int
+	IPRange       string
 }
 
 // pageData son los datos que reciben todas las páginas.
@@ -106,9 +117,10 @@ type pageData struct {
 
 	Domain    string
 	DNSServer string
-	Instances []instance.Instance
-	Recent    []instance.Instance
+	Instances []instanceView
+	Recent    []instanceView
 	Stats     stats
+	Health    healthView
 
 	Error string // error general, se muestra arriba de la página
 	Toast string // aviso flotante
@@ -139,21 +151,31 @@ func (h *Handler) deployForm(w http.ResponseWriter, r *http.Request) {
 
 // newPage arma los datos comunes de una página, incluidos los avisos que llegan por la URL.
 func (h *Handler) newPage(r *http.Request, page, breadcrumb string) pageData {
-	instances := h.store.List()
+	snap := h.monitor.Snapshot()
+	views := instanceViews(h.store.List(), snap, h.deployments.ActiveHostnames())
 	capacity := ipCount(h.cfg.FirstIP, h.cfg.LastIP)
 	toast, errMsg := flashMessages(r.URL.Query())
+
+	active := countActive(views)
+	activePercent := 0
+	if len(views) > 0 {
+		activePercent = active * 100 / len(views)
+	}
 
 	return pageData{
 		Page:       page,
 		Breadcrumb: breadcrumb,
 		Domain:     h.cfg.Domain,
 		DNSServer:  h.cfg.DNSServer,
-		Instances:  instances,
+		Instances:  views,
+		Health:     newHealthView(snap),
 		Stats: stats{
-			Total:      len(instances),
-			FreeIPs:    capacity - len(instances),
-			IPCapacity: capacity,
-			IPRange:    fmt.Sprintf("%s – %s", h.cfg.FirstIP, h.cfg.LastIP),
+			Total:         len(views),
+			Active:        active,
+			ActivePercent: activePercent,
+			FreeIPs:       capacity - len(views),
+			IPCapacity:    capacity,
+			IPRange:       fmt.Sprintf("%s – %s", h.cfg.FirstIP, h.cfg.LastIP),
 		},
 		Error:          errMsg,
 		Toast:          toast,
@@ -213,8 +235,8 @@ func flashMessages(query url.Values) (toast, errMsg string) {
 	return toast, errMsg
 }
 
-// newestFirst devuelve hasta limit instancias, de la más reciente a la más antigua.
-func newestFirst(list []instance.Instance, limit int) []instance.Instance {
+// newestFirst devuelve hasta limit elementos, del más reciente al más antiguo.
+func newestFirst[T any](list []T, limit int) []T {
 	recent := slices.Clone(list)
 	slices.Reverse(recent)
 	if len(recent) > limit {

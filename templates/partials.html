@@ -6,13 +6,14 @@
                 <th>Instancia</th>
                 <th>Hostname</th>
                 <th>Dirección IP</th>
+                <th>Estado</th>
                 <th class="col-date">Fecha de creación</th>
                 <th><span class="sr-only">Acciones</span></th>
             </tr>
         </thead>
         <tbody>
             {{range .}}
-            <tr data-instance="{{.Hostname}}">
+            <tr data-instance="{{.Hostname}}" data-status="{{.Status}}">
                 <td>
                     <div class="instance-name">
                         <span>{{icon "server" 18}}</span>
@@ -24,6 +25,7 @@
                 </td>
                 <td><a href="{{.URL}}" target="_blank" rel="noopener">{{.FQDN}}</a></td>
                 <td><code>{{.IP}}</code></td>
+                <td><span class="status-badge {{.Status}}"><i></i>{{.StatusLabel}}</span></td>
                 <td class="muted-cell col-date">{{formatDate .CreatedAt}}</td>
                 <td>
                     <div class="row-actions">
@@ -42,7 +44,7 @@
 
 <div class="mobile-cards">
     {{range .}}
-    <article class="mobile-instance" data-instance="{{.Hostname}}">
+    <article class="mobile-instance" data-instance="{{.Hostname}}" data-status="{{.Status}}">
         <div class="mobile-instance-head">
             <div class="instance-name">
                 <span>{{icon "server" 18}}</span>
@@ -51,6 +53,7 @@
                     <small>{{.FQDN}}</small>
                 </div>
             </div>
+            <span class="status-badge {{.Status}}"><i></i>{{.StatusLabel}}</span>
         </div>
         <div class="mobile-instance-info">
             <span>Dirección IP <code>{{.IP}}</code></span>

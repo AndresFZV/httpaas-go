@@ -37,7 +37,10 @@
         </nav>
 
         <div class="infra-card">
-            <div class="infra-title">Infraestructura local</div>
+            <div class="infra-title">
+                <span class="live-dot {{.Health.Tone}}"></span>
+                Infraestructura local
+            </div>
             <div class="infra-row">
                 <span>Dominio</span>
                 <strong>{{.Domain}}</strong>
@@ -45,6 +48,10 @@
             <div class="infra-row">
                 <span>Servidor DNS</span>
                 <strong>{{.DNSServer}}</strong>
+            </div>
+            <div class="infra-row">
+                <span>Estado</span>
+                <strong class="tone-{{.Health.Tone}}">{{.Health.StatusLabel}}</strong>
             </div>
         </div>
         <div class="sidebar-version">HTTPaaS · Versión 1.0.0</div>
@@ -60,6 +67,12 @@
                     <span>HTTPaaS</span>
                     {{icon "arrow" 14}}
                     <strong>{{.Breadcrumb}}</strong>
+                </div>
+            </div>
+            <div class="topbar-right">
+                <div class="service-status">
+                    <span class="live-dot {{.Health.Tone}}"></span>
+                    {{if not .Health.Checked}}Verificando infraestructura{{else if .Health.Operational}}Todos los sistemas operativos{{else}}Infraestructura con fallas{{end}}
                 </div>
             </div>
         </header>

@@ -15,22 +15,26 @@
         <span>Servidores aprovisionados</span>
     </article>
     <article class="stat-card">
+        <div class="stat-icon green">{{icon "activity" 20}}</div>
+        <p>Instancias activas</p>
+        <strong>{{.Stats.Active}}</strong>
+        <span>{{if .Stats.Total}}{{.Stats.ActivePercent}}% responden por HTTP{{else}}Sin instancias todavía{{end}}</span>
+    </article>
+    <article class="stat-card">
         <div class="stat-icon violet">{{icon "network" 20}}</div>
         <p>Direcciones IP libres</p>
         <strong>{{.Stats.FreeIPs}}</strong>
         <span>de {{.Stats.IPCapacity}} en el rango {{.Stats.IPRange}}</span>
     </article>
     <article class="stat-card">
-        <div class="stat-icon emerald">{{icon "globe" 20}}</div>
-        <p>Dominio</p>
-        <strong class="status-value">{{.Domain}}</strong>
-        <span>Zona administrada por Bind9</span>
-    </article>
-    <article class="stat-card">
-        <div class="stat-icon green">{{icon "pulse" 20}}</div>
-        <p>Servidor DNS</p>
-        <strong class="status-value">{{.DNSServer}}</strong>
-        <span>VM ns con Debian 13</span>
+        <div class="stat-icon emerald">{{icon "pulse" 20}}</div>
+        <p>Infraestructura</p>
+        <strong class="status-value tone-{{.Health.Tone}}">{{.Health.StatusLabel}}</strong>
+        <span>
+            {{if not .Health.Checked}}Primera verificación en curso
+            {{else if .Health.Operational}}Todos los servicios en línea
+            {{else}}{{len .Health.Failing}} servicio(s) sin respuesta{{end}}
+        </span>
     </article>
 </section>
 
@@ -52,5 +56,25 @@
             <a class="secondary-button" href="/deploy">{{icon "plus" 15}} Nueva instancia</a>
         </div>
     {{end}}
+</section>
+
+<section class="platform-strip tone-strip-{{.Health.Tone}}">
+    <div class="platform-icon">{{if eq .Health.Tone "danger"}}{{icon "alert" 20}}{{else}}{{icon "shield" 20}}{{end}}</div>
+    <div>
+        {{if not .Health.Checked}}
+            <strong>Verificando la plataforma</strong>
+            <span>Comprobando el servidor DNS, el acceso SSH y VirtualBox.</span>
+        {{else if .Health.Operational}}
+            <strong>Plataforma operativa</strong>
+            <span>{{range $i, $c := .Health.Components}}{{if $i}} · {{end}}{{$c.Name}}: {{$c.Detail}}{{end}}</span>
+        {{else}}
+            <strong>Plataforma con fallas</strong>
+            <span>Sin respuesta: {{range $i, $name := .Health.Failing}}{{if $i}}, {{end}}{{$name}}{{end}}. Los despliegues pueden fallar hasta que se resuelva.</span>
+        {{end}}
+    </div>
+    <div class="platform-meta">
+        <span>Última verificación</span>
+        <strong>{{ago .Health.CheckedAt}}</strong>
+    </div>
 </section>
 {{end}}

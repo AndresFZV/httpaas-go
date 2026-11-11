@@ -146,4 +146,81 @@ Todos los valores tienen un predeterminado y se pueden cambiar con variables de 
 | `HTTPAAS_ADDR` | `:8080` | Dirección donde escucha la app |
 | `HTTPAAS_DATA_FILE` | `data/instances.json` | Registro de instancias; los `.zip` pendientes van en `data/uploads/` |
 | `HTTPAAS_VBOXMANAGE` | `C:\Program Files\Oracle\VirtualBox\VBoxManage.exe` | Ejecutable de VirtualBox |
-|
+| `HTTPAAS_TEMPLATE_DISK` | `C:\HTTPaaS\ApacheServer.vdi` | Disco plantilla en multiconexión |
+| `HTTPAAS_HOSTONLY_IF` | `VirtualBox Host-Only Ethernet Adapter` | Adaptador de la red `192.168.10.0/24` |
+| `HTTPAAS_NS_VM` | `debian ns` | Nombre de la VM del servidor DNS en VirtualBox |
+| `HTTPAAS_SSH` | `C:\Windows\System32\OpenSSH\ssh.exe` | Cliente SSH |
+| `HTTPAAS_SSH_USER` | `deploy` | Usuario remoto |
+| `HTTPAAS_SSH_KEY` | `~/.ssh/httpaas` | Llave privada |
+| `HTTPAAS_TEMPLATE_IP` | `192.168.10.20` | IP con la que arranca toda VM clonada |
+| `HTTPAAS_DNS_SERVER` | `192.168.10.10` | IP de `ns` |
+
+Valores fijos en el código: rango de IPs `192.168.10.30`–`192.168.10.254`, 512 MB y 1 CPU por VM, TTL de 300 s para los registros DNS, verificación de la infraestructura cada 5 s (cada 3 s durante transiciones o fallas).
+
+## Estructura del proyecto
+
+```
+.
+├── main.go, config.go     # arranque y configuración
+├── internal/
+│   ├── instance/          # registro de instancias en JSON y asignación de IPs
+│   ├── vbox/              # comandos de VBoxManage
+│   ├── remote/            # cliente SSH (comandos y envío de archivos)
+│   ├── dns/               # registros A en Bind9 con nsupdate
+│   ├── hostnet/           # limpieza de la caché ARP del anfitrión
+│   ├── provision/         # orquestación de la creación y eliminación de VMs
+│   ├── deploy/            # validación y despliegue del .zip
+│   ├── deployment/        # despliegues en segundo plano, con estado y reintento
+│   ├── health/            # verificación periódica y registro de cambios de estado
+│   ├── power/             # encender, apagar y reiniciar VMs
+│   └── web/               # handlers HTTP y vistas
+├── templates/             # plantillas HTML (layout, partes y páginas)
+├── static/                # CSS, JavaScript e íconos
+└── ejemplos/              # sitios de prueba (paisajes y negocios)
+```
+
+Solo usa la biblioteca estándar de Go: sin frameworks web ni dependencias externas.
+
+## Rutas
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| `GET` | `/` | Dashboard |
+| `GET` | `/instances` | Lista de instancias |
+| `GET` | `/deploy` | Formulario de despliegue |
+| `POST` | `/deploy` | Crea la instancia y, si hay `.zip`, lo publica |
+| `GET` | `/deployments/{id}` | Progreso, éxito o error de un despliegue |
+| `POST` | `/deployments/{id}/retry` | Reintenta un despliegue fallido |
+| `POST` | `/instances/{hostname}/publish` | Publica un `.zip` en una instancia existente |
+| `POST` | `/instances/{hostname}/power/{start,stop,restart}` | Enciende, apaga o reinicia una instancia |
+| `POST` | `/instances/{hostname}/delete` | Elimina una instancia |
+| `POST` | `/infrastructure/ns/power/{start,restart}` | Enciende o reinicia `ns` |
+| `GET` | `/api/deployments/{id}` | Estado de un despliegue en JSON |
+| `GET` | `/api/status` | Estado de las instancias, la infraestructura y `ns` en JSON |
+
+## Pruebas
+
+```bash
+go test ./...
+```
+
+Las pruebas no necesitan VirtualBox ni las VMs: los comandos externos (VBoxManage, SSH, nsupdate) se reemplazan por versiones falsas, y las páginas se prueban con `httptest` sobre las plantillas reales.
+
+## Sitios de prueba
+
+Los `.zip` deben tener `index.html` en la raíz. Para generarlos desde PowerShell:
+
+```powershell
+Compress-Archive -Path ejemplos\paisajes\* -DestinationPath paisajes.zip -Force
+Compress-Archive -Path ejemplos\negocios\* -DestinationPath negocios.zip -Force
+```
+
+## Limitaciones conocidas
+
+- **Caché ARP de Windows**: todas las VMs arrancan con la misma IP temporal (y las IPs se reutilizan al eliminar), cada una con una MAC distinta. Windows conserva la MAC anterior y la VM nueva queda inalcanzable; la app borra esa entrada con `arp -d`, que requiere ejecutarla como administrador.
+- **Una instancia a la vez**: por la IP temporal compartida, los aprovisionamientos se encolan.
+- **Llaves de host compartidas**: todas las instancias salen del mismo disco y comparten la llave de host SSH, por lo que la app no verifica las llaves de host.
+- **Estado de los despliegues en memoria**: si la app se reinicia durante un despliegue, se pierde su seguimiento (las instancias ya creadas siguen en el registro).
+- **Tiempos**: crear una instancia tarda unos 2-3 minutos, dominados por los dos arranques de Debian (antes y después de configurar la IP).
+- **Reinicio del anfitrión**: las VMs quedan apagadas; se encienden desde la interfaz (`ns` con *Encender ns* en el dashboard).
+- **Caché del navegador**: si se abrió una instancia antes de publicar, el navegador puede mostrar la página por defecto de Apache; se resuelve con `Ctrl+F5`.

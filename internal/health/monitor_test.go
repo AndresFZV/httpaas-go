@@ -15,13 +15,23 @@ type fakeLister []instance.Instance
 
 func (f fakeLister) List() []instance.Instance { return f }
 
-type fakeVirtualBox struct{ err error }
+type fakeVirtualBox struct {
+	err     error
+	running map[string]bool
+}
 
 func (f fakeVirtualBox) Version(context.Context) (string, error) {
 	if f.err != nil {
 		return "", f.err
 	}
 	return "7.2.6", nil
+}
+
+func (f fakeVirtualBox) RunningVMs(context.Context) (map[string]bool, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.running, nil
 }
 
 func TestCheckReportsInstancesAndComponents(t *testing.T) {
@@ -103,5 +113,29 @@ func TestSnapshotReturnsCopy(t *testing.T) {
 	}
 	if again.Components[0].OK {
 		t.Error("modificar la copia cambió los componentes del monitor")
+	}
+}
+
+func TestCheckRecordsRunningVMs(t *testing.T) {
+	vbox := fakeVirtualBox{running: map[string]bool{"paisajes": true}}
+	m := NewMonitor(Config{DNSServer: netip.MustParseAddr("127.0.0.1"), Domain: "cloud.local"}, fakeLister{}, vbox)
+	m.Check(context.Background())
+
+	snap := m.Snapshot()
+	if running, known := snap.VMRunning("paisajes"); !known || !running {
+		t.Errorf("paisajes: encendida = %v, conocida = %v", running, known)
+	}
+	if running, known := snap.VMRunning("negocios"); !known || running {
+		t.Errorf("negocios: encendida = %v, conocida = %v", running, known)
+	}
+}
+
+func TestVMStateUnknownWhenVirtualBoxFails(t *testing.T) {
+	m := NewMonitor(Config{DNSServer: netip.MustParseAddr("127.0.0.1"), Domain: "cloud.local"},
+		fakeLister{}, fakeVirtualBox{err: errors.New("no instalado")})
+	m.Check(context.Background())
+
+	if _, known := m.Snapshot().VMRunning("paisajes"); known {
+		t.Error("sin VirtualBox el estado de las VMs no debía ser conocido")
 	}
 }

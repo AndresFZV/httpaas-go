@@ -42,6 +42,8 @@ type Snapshot struct {
 	CheckedAt  time.Time
 	Components []Component
 	Instances  map[string]InstanceStatus // por hostname
+	VMs        map[string]bool           // VMs encendidas según VirtualBox
+	VMsKnown   bool                      // false si no se pudo consultar VirtualBox
 }
 
 // Checked indica si ya se hizo al menos una verificación.
@@ -62,14 +64,23 @@ func (s Snapshot) Operational() bool {
 	return true
 }
 
+// VMRunning indica si la VM name estaba encendida; known es false si no se pudo consultar VirtualBox.
+func (s Snapshot) VMRunning(name string) (running, known bool) {
+	if !s.VMsKnown {
+		return false, false
+	}
+	return s.VMs[name], true
+}
+
 // InstanceLister entrega las instancias registradas.
 type InstanceLister interface {
 	List() []instance.Instance
 }
 
-// VirtualBox permite comprobar que VBoxManage responde.
+// VirtualBox permite comprobar que VBoxManage responde y qué VMs están encendidas.
 type VirtualBox interface {
 	Version(ctx context.Context) (string, error)
+	RunningVMs(ctx context.Context) (map[string]bool, error)
 }
 
 // Config son los parámetros del monitor.
@@ -128,6 +139,7 @@ func (m *Monitor) Snapshot() Snapshot {
 	snap := m.snap
 	snap.Components = slices.Clone(m.snap.Components)
 	snap.Instances = maps.Clone(m.snap.Instances)
+	snap.VMs = maps.Clone(m.snap.VMs)
 	return snap
 }
 
@@ -135,15 +147,14 @@ func (m *Monitor) Snapshot() Snapshot {
 func (m *Monitor) Check(ctx context.Context) {
 	var wg sync.WaitGroup
 
-	checks := []func(context.Context) Component{m.checkDNS, m.checkSSH, m.checkVirtualBox}
-	components := make([]Component, len(checks))
-	for i, check := range checks {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			components[i] = check(ctx)
-		}()
-	}
+	var dns, ssh, vbox Component
+	var vms map[string]bool
+	var vmsKnown bool
+
+	wg.Add(3)
+	go func() { defer wg.Done(); dns = m.checkDNS(ctx) }()
+	go func() { defer wg.Done(); ssh = m.checkSSH(ctx) }()
+	go func() { defer wg.Done(); vbox, vms, vmsKnown = m.checkVirtualBox(ctx) }()
 
 	list := m.instances.List()
 	statuses := make([]InstanceStatus, len(list))
@@ -163,7 +174,13 @@ func (m *Monitor) Check(ctx context.Context) {
 	}
 
 	m.mu.Lock()
-	m.snap = Snapshot{CheckedAt: time.Now(), Components: components, Instances: instances}
+	m.snap = Snapshot{
+		CheckedAt:  time.Now(),
+		Components: []Component{dns, ssh, vbox},
+		Instances:  instances,
+		VMs:        vms,
+		VMsKnown:   vmsKnown,
+	}
 	m.mu.Unlock()
 }
 
@@ -209,9 +226,9 @@ func (m *Monitor) checkSSH(ctx context.Context) Component {
 	return c
 }
 
-// checkVirtualBox comprueba que VBoxManage responda.
-func (m *Monitor) checkVirtualBox(ctx context.Context) Component {
-	c := Component{Name: "VirtualBox"}
+// checkVirtualBox comprueba que VBoxManage responda y obtiene las VMs encendidas.
+func (m *Monitor) checkVirtualBox(ctx context.Context) (c Component, vms map[string]bool, known bool) {
+	c = Component{Name: "VirtualBox"}
 
 	ctx, cancel := context.WithTimeout(ctx, vboxTimeout)
 	defer cancel()
@@ -219,11 +236,16 @@ func (m *Monitor) checkVirtualBox(ctx context.Context) Component {
 	version, err := m.vbox.Version(ctx)
 	if err != nil {
 		c.Detail = "VBoxManage no responde"
-		return c
+		return c, nil, false
 	}
 	c.OK = true
 	c.Detail = "Versión " + version
-	return c
+
+	vms, err = m.vbox.RunningVMs(ctx)
+	if err != nil {
+		return c, nil, false
+	}
+	return c, vms, true
 }
 
 // checkInstance hace una petición HTTP a la instancia.

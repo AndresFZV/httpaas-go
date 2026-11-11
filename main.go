@@ -29,11 +29,10 @@ func main() {
 	}
 	cfg.logSummary()
 
-	store, err := instance.NewStore(
-		cfg.DataFile,
-		netip.MustParseAddr(firstInstanceIP),
-		netip.MustParseAddr(lastInstanceIP),
-	)
+	firstIP := netip.MustParseAddr(firstInstanceIP)
+	lastIP := netip.MustParseAddr(lastInstanceIP)
+
+	store, err := instance.NewStore(cfg.DataFile, firstIP, lastIP)
 	if err != nil {
 		log.Fatalf("no se pudo cargar el registro de instancias: %v", err)
 	}
@@ -63,7 +62,14 @@ func main() {
 
 	deployer := deploy.NewDeployer(ssh, apacheWebRoot)
 
-	handler, err := web.NewHandler(store, provisioner, deployer, "templates", "static")
+	handler, err := web.NewHandler(web.Config{
+		Domain:       instance.Domain,
+		DNSServer:    cfg.DNSServer.String(),
+		FirstIP:      firstIP,
+		LastIP:       lastIP,
+		TemplatesDir: "templates",
+		StaticDir:    "static",
+	}, store, provisioner, deployer)
 	if err != nil {
 		log.Fatalf("no se pudo inicializar la aplicación: %v", err)
 	}

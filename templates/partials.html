@@ -1,0 +1,93 @@
+{{define "instances-table"}}
+<div class="desktop-table">
+    <table>
+        <thead>
+            <tr>
+                <th>Instancia</th>
+                <th>Hostname</th>
+                <th>Dirección IP</th>
+                <th class="col-date">Fecha de creación</th>
+                <th><span class="sr-only">Acciones</span></th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .}}
+            <tr data-instance="{{.Hostname}}">
+                <td>
+                    <div class="instance-name">
+                        <span>{{icon "server" 18}}</span>
+                        <div>
+                            <strong>{{displayName .Hostname}}</strong>
+                            <small>Servidor Apache</small>
+                        </div>
+                    </div>
+                </td>
+                <td><a href="{{.URL}}" target="_blank" rel="noopener">{{.FQDN}}</a></td>
+                <td><code>{{.IP}}</code></td>
+                <td class="muted-cell col-date">{{formatDate .CreatedAt}}</td>
+                <td>
+                    <div class="row-actions">
+                        <a class="icon-button" href="{{.URL}}" target="_blank" rel="noopener" title="Abrir aplicación">{{icon "external" 17}}</a>
+                        <button type="button" class="icon-button" data-copy="{{.URL}}" title="Copiar URL">{{icon "copy" 17}}</button>
+                        <button type="button" class="icon-button danger" title="Eliminar instancia"
+                                data-delete data-hostname="{{.Hostname}}" data-name="{{displayName .Hostname}}"
+                                data-fqdn="{{.FQDN}}" data-ip="{{.IP}}">{{icon "trash" 17}}</button>
+                    </div>
+                </td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+
+<div class="mobile-cards">
+    {{range .}}
+    <article class="mobile-instance" data-instance="{{.Hostname}}">
+        <div class="mobile-instance-head">
+            <div class="instance-name">
+                <span>{{icon "server" 18}}</span>
+                <div>
+                    <strong>{{displayName .Hostname}}</strong>
+                    <small>{{.FQDN}}</small>
+                </div>
+            </div>
+        </div>
+        <div class="mobile-instance-info">
+            <span>Dirección IP <code>{{.IP}}</code></span>
+            <span>Creada <strong>{{formatDate .CreatedAt}}</strong></span>
+        </div>
+        <div class="mobile-instance-actions">
+            <a href="{{.URL}}" target="_blank" rel="noopener">{{icon "external" 16}} Abrir</a>
+            <button type="button" data-copy="{{.URL}}">{{icon "copy" 16}} Copiar</button>
+            <button type="button" class="danger-text"
+                    data-delete data-hostname="{{.Hostname}}" data-name="{{displayName .Hostname}}"
+                    data-fqdn="{{.FQDN}}" data-ip="{{.IP}}">{{icon "trash" 16}} Eliminar</button>
+        </div>
+    </article>
+    {{end}}
+</div>
+{{end}}
+
+{{define "delete-dialog"}}
+<dialog class="modal" data-delete-dialog aria-labelledby="delete-title">
+    <div class="modal-danger-icon">{{icon "trash" 22}}</div>
+    <h2 id="delete-title">¿Eliminar la instancia <span data-field="hostname"></span>?</h2>
+    <p>Esta acción apagará y borrará la máquina virtual, quitará su registro DNS y la aplicación dejará de estar disponible.</p>
+    <div class="modal-instance">
+        <div class="instance-name">
+            <span>{{icon "server" 17}}</span>
+            <div>
+                <strong data-field="name"></strong>
+                <small data-field="fqdn"></small>
+            </div>
+        </div>
+        <code data-field="ip"></code>
+    </div>
+    <form method="post">
+        <div class="modal-actions">
+            <button type="button" class="secondary-button" data-dialog-cancel>Cancelar</button>
+            <button type="submit" class="danger-button">{{icon "trash" 16}} <span data-label>Eliminar instancia</span></button>
+        </div>
+    </form>
+</dialog>
+{{end}}

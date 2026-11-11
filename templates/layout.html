@@ -1,0 +1,86 @@
+{{define "layout"}}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Breadcrumb}} · HTTPaaS</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app-shell">
+    <aside class="sidebar" data-sidebar>
+        <div class="brand">
+            <div class="logo-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+            <div>
+                <strong>HTTPaaS</strong>
+                <span>Cloud Infrastructure</span>
+            </div>
+            <button type="button" class="sidebar-close" data-menu-close aria-label="Cerrar menú">{{icon "x" 18}}</button>
+        </div>
+
+        <nav class="nav-block" aria-label="Navegación principal">
+            <p>PLATAFORMA</p>
+            <a href="/" class="{{if eq .Page "dashboard"}}active{{end}}">
+                {{icon "grid" 18}} Dashboard
+            </a>
+            <a href="/instances" class="{{if eq .Page "instances"}}active{{end}}">
+                {{icon "server" 18}} Instancias
+                <span class="nav-count">{{len .Instances}}</span>
+            </a>
+            <a href="/deploy" class="{{if eq .Page "deploy"}}active{{end}}">
+                {{icon "rocket" 18}} Desplegar aplicación
+            </a>
+        </nav>
+
+        <div class="infra-card">
+            <div class="infra-title">Infraestructura local</div>
+            <div class="infra-row">
+                <span>Dominio</span>
+                <strong>{{.Domain}}</strong>
+            </div>
+            <div class="infra-row">
+                <span>Servidor DNS</span>
+                <strong>{{.DNSServer}}</strong>
+            </div>
+        </div>
+        <div class="sidebar-version">HTTPaaS · Versión 1.0.0</div>
+    </aside>
+
+    <button type="button" class="sidebar-scrim" data-scrim hidden aria-label="Cerrar menú"></button>
+
+    <div class="main-column">
+        <header class="topbar">
+            <div class="topbar-left">
+                <button type="button" class="mobile-menu" data-menu-open aria-label="Abrir menú">{{icon "menu" 18}}</button>
+                <div>
+                    <span>HTTPaaS</span>
+                    {{icon "arrow" 14}}
+                    <strong>{{.Breadcrumb}}</strong>
+                </div>
+            </div>
+        </header>
+
+        <main class="content">
+            {{if .Error}}
+                <div class="page-alert" role="alert">{{icon "alert" 18}} {{.Error}}</div>
+            {{end}}
+            {{template "content" .}}
+        </main>
+    </div>
+</div>
+
+{{template "delete-dialog" .}}
+
+<div class="toast" role="status" data-toast {{if not .Toast}}hidden{{end}}>
+    <span>{{icon "check" 15}}</span>
+    <span data-toast-text>{{.Toast}}</span>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
+{{end}}

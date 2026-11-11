@@ -1,0 +1,56 @@
+{{define "content"}}
+<div class="page-heading">
+    <div>
+        <h1>Dashboard</h1>
+        <p>Administra y supervisa tus servicios HTTP desde un solo lugar.</p>
+    </div>
+    <a class="primary-button" href="/deploy">{{icon "plus" 17}} Nueva instancia</a>
+</div>
+
+<section class="stats-grid" aria-label="Resumen de infraestructura">
+    <article class="stat-card">
+        <div class="stat-icon blue">{{icon "server" 20}}</div>
+        <p>Instancias totales</p>
+        <strong>{{.Stats.Total}}</strong>
+        <span>Servidores aprovisionados</span>
+    </article>
+    <article class="stat-card">
+        <div class="stat-icon violet">{{icon "network" 20}}</div>
+        <p>Direcciones IP libres</p>
+        <strong>{{.Stats.FreeIPs}}</strong>
+        <span>de {{.Stats.IPCapacity}} en el rango {{.Stats.IPRange}}</span>
+    </article>
+    <article class="stat-card">
+        <div class="stat-icon emerald">{{icon "globe" 20}}</div>
+        <p>Dominio</p>
+        <strong class="status-value">{{.Domain}}</strong>
+        <span>Zona administrada por Bind9</span>
+    </article>
+    <article class="stat-card">
+        <div class="stat-icon green">{{icon "pulse" 20}}</div>
+        <p>Servidor DNS</p>
+        <strong class="status-value">{{.DNSServer}}</strong>
+        <span>VM ns con Debian 13</span>
+    </article>
+</section>
+
+<section class="panel table-panel">
+    <div class="panel-heading">
+        <div>
+            <h2>Instancias recientes</h2>
+            <p>Tus últimos servidores HTTP aprovisionados.</p>
+        </div>
+        <a class="text-button" href="/instances">Ver todas {{icon "arrow" 16}}</a>
+    </div>
+    {{if .Recent}}
+        {{template "instances-table" .Recent}}
+    {{else}}
+        <div class="empty-state">
+            <div>{{icon "server" 24}}</div>
+            <h3>Aún no hay instancias</h3>
+            <p>Crea tu primera instancia Apache y publica tu sitio web.</p>
+            <a class="secondary-button" href="/deploy">{{icon "plus" 15}} Nueva instancia</a>
+        </div>
+    {{end}}
+</section>
+{{end}}

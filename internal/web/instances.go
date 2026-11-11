@@ -3,7 +3,6 @@ package web
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -26,11 +25,9 @@ const (
 )
 
 var (
-	errInvalidForm      = errors.New("no se pudo leer el formulario enviado")
-	errInstanceRequired = errors.New("la instancia no existe; primero créela con el botón Aceptar")
-	errProvisionFailed  = errors.New("no se pudo crear la instancia; revise el log del servidor")
-	errDeleteFailed     = errors.New("no se pudo eliminar la instancia; revise el log del servidor")
-	errDeployFailed     = errors.New("no se pudo publicar el contenido; revise el log del servidor")
+	errInvalidForm     = errors.New("no se pudo leer el formulario enviado")
+	errProvisionFailed = errors.New("no se pudo crear la instancia; revise el log del servidor")
+	errDeleteFailed    = errors.New("no se pudo eliminar la instancia; revise el log del servidor")
 )
 
 // validationErrors son los errores de datos inválidos enviados por el usuario.
@@ -45,94 +42,68 @@ var validationErrors = []error{
 	deploy.ErrArchiveNoIndex,
 }
 
-// createInstance atiende el botón Aceptar: crea la VM, le asigna hostname e IP y la registra en el DNS.
-func (h *Handler) createInstance(w http.ResponseWriter, r *http.Request) {
+// deploy atiende el formulario de despliegue: crea la instancia y, si viene un .zip, lo publica.
+func (h *Handler) deploy(w http.ResponseWriter, r *http.Request) {
 	if err := parseRequestForm(w, r); err != nil {
-		h.renderError(w, "", err)
+		h.renderDeployError(w, r, "", err)
 		return
 	}
 
 	hostname := instance.NormalizeHostname(r.FormValue("hostname"))
 	if err := instance.ValidateHostname(hostname); err != nil {
-		h.renderError(w, hostname, err)
+		h.renderDeployError(w, r, hostname, err)
 		return
 	}
 
-	ctx, cancel := backgroundContext(r, provisionTimeout)
+	// El .zip es opcional: sin archivo solo se crea la instancia.
+	file, header, err := r.FormFile("content")
+	hasContent := err == nil
+	if err != nil && !errors.Is(err, http.ErrMissingFile) {
+		log.Printf("leer archivo del formulario: %v", err)
+		h.renderDeployError(w, r, hostname, errInvalidForm)
+		return
+	}
+	if hasContent {
+		defer file.Close()
+		if err := deploy.ValidateArchive(file, header.Size, header.Filename); err != nil {
+			h.renderDeployError(w, r, hostname, err)
+			return
+		}
+	}
+
+	ctx, cancel := backgroundContext(r, provisionTimeout+deployTimeout)
 	defer cancel()
 
 	log.Printf("aprovisionando %s...", hostname)
 	inst, err := h.provisioner.Provision(ctx, hostname)
 	if err != nil {
-		h.renderError(w, hostname, infrastructureError(err, errProvisionFailed, "aprovisionar "+hostname))
+		h.renderDeployError(w, r, hostname, infrastructureError(err, errProvisionFailed, "aprovisionar "+hostname))
 		return
 	}
 	log.Printf("instancia creada: %s (%s)", inst.FQDN(), inst.IP)
 
-	redirectHome(w, r, hostname)
-}
-
-// deployInstance atiende el botón Publicar: valida el .zip y lo despliega en la instancia.
-func (h *Handler) deployInstance(w http.ResponseWriter, r *http.Request) {
-	if err := parseRequestForm(w, r); err != nil {
-		h.renderError(w, "", err)
+	if !hasContent {
+		redirectTo(w, r, "/instances?created="+url.QueryEscape(hostname))
 		return
 	}
 
-	hostname := instance.NormalizeHostname(r.FormValue("hostname"))
-	if err := instance.ValidateHostname(hostname); err != nil {
-		h.renderError(w, hostname, err)
-		return
-	}
-
-	inst, err := h.store.Get(hostname)
-	if errors.Is(err, instance.ErrNotFound) {
-		h.renderError(w, hostname, errInstanceRequired)
-		return
-	}
-	if err != nil {
-		h.renderError(w, hostname, err)
-		return
-	}
-
-	file, header, err := r.FormFile("content")
-	if errors.Is(err, http.ErrMissingFile) {
-		h.renderError(w, hostname, deploy.ErrArchiveMissing)
-		return
-	}
-	if err != nil {
-		log.Printf("leer archivo del formulario: %v", err)
-		h.renderError(w, hostname, errInvalidForm)
-		return
-	}
-	defer file.Close()
-
-	if err := deploy.ValidateArchive(file, header.Size, header.Filename); err != nil {
-		h.renderError(w, hostname, err)
-		return
-	}
-	// La validación lee el archivo; se vuelve al inicio antes de enviarlo.
+	// La validación leyó el archivo; se vuelve al inicio antes de enviarlo.
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		h.renderError(w, hostname, fmt.Errorf("reiniciar lectura del archivo: %w", err))
+		log.Printf("publicar en %s: reiniciar lectura del archivo: %v", hostname, err)
+		redirectTo(w, r, "/instances?publish_failed="+url.QueryEscape(hostname))
 		return
 	}
-
-	ctx, cancel := backgroundContext(r, deployTimeout)
-	defer cancel()
-
 	if err := h.deployer.Deploy(ctx, inst.IP.String(), file); err != nil {
-		h.renderError(w, hostname, infrastructureError(err, errDeployFailed, "publicar en "+hostname))
+		log.Printf("publicar en %s: %v", hostname, err)
+		redirectTo(w, r, "/instances?publish_failed="+url.QueryEscape(hostname))
 		return
 	}
 	log.Printf("contenido %s publicado en %s", header.Filename, inst.FQDN())
 
-	h.renderIndex(w, http.StatusOK, indexData{
-		Hostname: hostname,
-		Success:  fmt.Sprintf("Contenido publicado en %s", inst.URL()),
-	})
+	redirectTo(w, r, "/instances?created="+url.QueryEscape(hostname)+"&published=1")
 }
 
-// deleteInstance atiende el botón Eliminar: borra la VM, su registro DNS y la instancia del registro.
+// deleteInstance borra la VM, su registro DNS y la instancia del registro.
 func (h *Handler) deleteInstance(w http.ResponseWriter, r *http.Request) {
 	hostname := instance.NormalizeHostname(r.PathValue("hostname"))
 
@@ -140,12 +111,32 @@ func (h *Handler) deleteInstance(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if err := h.provisioner.Delete(ctx, hostname); err != nil {
-		h.renderError(w, "", infrastructureError(err, errDeleteFailed, "eliminar "+hostname))
+		err = infrastructureError(err, errDeleteFailed, "eliminar "+hostname)
+		status, _ := statusFor(err)
+		data := h.newPage(r, "instances", "Instancias")
+		data.Error = err.Error()
+		h.render(w, status, data)
 		return
 	}
 	log.Printf("instancia eliminada: %s", hostname)
 
-	redirectHome(w, r, "")
+	redirectTo(w, r, "/instances?deleted="+url.QueryEscape(hostname))
+}
+
+// renderDeployError vuelve a mostrar el formulario con el error y el nombre que había escrito el usuario.
+// Los errores inesperados se registran en el log y el usuario recibe un mensaje genérico.
+func (h *Handler) renderDeployError(w http.ResponseWriter, r *http.Request, hostname string, err error) {
+	status, known := statusFor(err)
+	message := err.Error()
+	if !known {
+		log.Printf("error inesperado: %v", err)
+		message = "Ocurrió un error interno; revise el log del servidor"
+	}
+
+	data := h.newPage(r, "deploy", "Nuevo despliegue")
+	data.Hostname = hostname
+	data.FormError = message
+	h.render(w, status, data)
 }
 
 // backgroundContext devuelve un contexto que no se cancela si el cliente cierra la conexión,
@@ -164,18 +155,6 @@ func infrastructureError(err, public error, action string) error {
 	return public
 }
 
-// renderError muestra el error en la página principal con el código HTTP correspondiente.
-// Los errores inesperados se registran en el log y el usuario recibe un mensaje genérico.
-func (h *Handler) renderError(w http.ResponseWriter, hostname string, err error) {
-	status, known := statusFor(err)
-	message := err.Error()
-	if !known {
-		log.Printf("error inesperado: %v", err)
-		message = "Ocurrió un error interno; revise el log del servidor"
-	}
-	h.renderIndex(w, status, indexData{Hostname: hostname, Error: message})
-}
-
 // statusFor traduce un error al código HTTP; known indica si el error es esperado.
 func statusFor(err error) (status int, known bool) {
 	switch {
@@ -185,11 +164,11 @@ func statusFor(err error) (status int, known bool) {
 		return http.StatusBadRequest, true
 	case errors.Is(err, instance.ErrHostnameTaken):
 		return http.StatusConflict, true
-	case errors.Is(err, instance.ErrNotFound), errors.Is(err, errInstanceRequired):
+	case errors.Is(err, instance.ErrNotFound):
 		return http.StatusNotFound, true
 	case errors.Is(err, instance.ErrNoFreeIP):
 		return http.StatusServiceUnavailable, true
-	case errors.Is(err, errProvisionFailed), errors.Is(err, errDeleteFailed), errors.Is(err, errDeployFailed):
+	case errors.Is(err, errProvisionFailed), errors.Is(err, errDeleteFailed):
 		return http.StatusInternalServerError, true
 	}
 
@@ -201,12 +180,8 @@ func statusFor(err error) (status int, known bool) {
 	return http.StatusInternalServerError, false
 }
 
-// redirectHome redirige a la página principal; si hostname no está vacío, lo deja en el campo.
-func redirectHome(w http.ResponseWriter, r *http.Request, hostname string) {
-	target := "/"
-	if hostname != "" {
-		target += "?host=" + url.QueryEscape(hostname)
-	}
+// redirectTo redirige con 303, que obliga al navegador a hacer un GET después de un POST.
+func redirectTo(w http.ResponseWriter, r *http.Request, target string) {
 	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 

@@ -21,6 +21,7 @@ import (
 	"github.com/AndresFZV/httpaas-go/internal/deployment"
 	"github.com/AndresFZV/httpaas-go/internal/health"
 	"github.com/AndresFZV/httpaas-go/internal/instance"
+	"github.com/AndresFZV/httpaas-go/internal/metrics"
 	"github.com/AndresFZV/httpaas-go/internal/power"
 )
 
@@ -94,9 +95,9 @@ func healthySnapshot() health.Snapshot {
 	return health.Snapshot{
 		CheckedAt: time.Now(),
 		Components: []health.Component{
-			{Name: "Servidor DNS · Bind9", OK: true, Detail: "Resuelve ns.cloud.local"},
-			{Name: "Acceso SSH a ns", OK: true, Detail: "Puerto 22 disponible"},
-			{Name: "VirtualBox", OK: true, Detail: "Versión 7.2.6"},
+			{ID: health.ComponentDNS, Name: "Servidor DNS · Bind9", OK: true, Detail: "Resuelve ns.cloud.local"},
+			{ID: health.ComponentSSH, Name: "Acceso SSH a ns", OK: true, Detail: "Puerto 22 disponible"},
+			{ID: health.ComponentVirtualBox, Name: "VirtualBox", OK: true, Detail: "Versión 7.2.6"},
 		},
 		Instances: map[string]health.InstanceStatus{"paisajes": health.InstanceActive},
 		VMs:       map[string]bool{"paisajes": true, nsVM: true},
@@ -105,6 +106,14 @@ func healthySnapshot() health.Snapshot {
 }
 
 func newTestServerWith(t *testing.T, snap health.Snapshot, pw *fakePower) *http.ServeMux {
+	t.Helper()
+	mux := http.NewServeMux()
+	newTestHandler(t, snap, pw, nil).RegisterRoutes(mux)
+	return mux
+}
+
+// newTestHandler crea un Handler con una instancia registrada (paisajes) y las dependencias falsas.
+func newTestHandler(t *testing.T, snap health.Snapshot, pw *fakePower, reg *metrics.Registry) *Handler {
 	t.Helper()
 
 	first := netip.MustParseAddr("192.168.10.30")
@@ -130,14 +139,12 @@ func newTestServerWith(t *testing.T, snap health.Snapshot, pw *fakePower) *http.
 		Deployments: newFakeDeployments(),
 		Monitor:     fakeMonitor{snap: snap},
 		Power:       pw,
+		Metrics:     reg,
 	})
 	if err != nil {
 		t.Fatalf("NewHandler() error: %v", err)
 	}
-
-	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
-	return mux
+	return h
 }
 
 func newTestServer(t *testing.T, snap health.Snapshot) *http.ServeMux {

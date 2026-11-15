@@ -30,9 +30,17 @@ const (
 	InstanceUnreachable InstanceStatus = "unreachable"
 )
 
+// Identificadores de los componentes, para las métricas y la verificación de disponibilidad.
+const (
+	ComponentDNS        = "dns"
+	ComponentSSH        = "ssh_ns"
+	ComponentVirtualBox = "virtualbox"
+)
+
 // Component es el estado de una pieza de la infraestructura.
 type Component struct {
-	Name   string
+	ID     string // identificador estable, sin espacios ni tildes
+	Name   string // nombre para mostrar en la interfaz
 	OK     bool
 	Detail string
 }
@@ -207,7 +215,7 @@ func (m *Monitor) Check(ctx context.Context) {
 
 // checkDNS consulta directamente a ns por ns.<dominio>, sin pasar por el DNS del anfitrión.
 func (m *Monitor) checkDNS(ctx context.Context) Component {
-	c := Component{Name: "Servidor DNS · Bind9"}
+	c := Component{ID: ComponentDNS, Name: "Servidor DNS · Bind9"}
 	server := netip.AddrPortFrom(m.cfg.DNSServer, 53).String()
 
 	resolver := &net.Resolver{
@@ -233,7 +241,7 @@ func (m *Monitor) checkDNS(ctx context.Context) Component {
 
 // checkSSH comprueba que ns acepte conexiones SSH, que la app usa para actualizar el DNS.
 func (m *Monitor) checkSSH(ctx context.Context) Component {
-	c := Component{Name: "Acceso SSH a ns"}
+	c := Component{ID: ComponentSSH, Name: "Acceso SSH a ns"}
 	dialer := net.Dialer{Timeout: dialTimeout}
 
 	conn, err := dialer.DialContext(ctx, "tcp", netip.AddrPortFrom(m.cfg.DNSServer, 22).String())
@@ -249,7 +257,7 @@ func (m *Monitor) checkSSH(ctx context.Context) Component {
 
 // checkVirtualBox comprueba que VBoxManage responda y obtiene las VMs encendidas.
 func (m *Monitor) checkVirtualBox(ctx context.Context) (c Component, vms map[string]bool, known bool) {
-	c = Component{Name: "VirtualBox"}
+	c = Component{ID: ComponentVirtualBox, Name: "VirtualBox"}
 
 	ctx, cancel := context.WithTimeout(ctx, vboxTimeout)
 	defer cancel()

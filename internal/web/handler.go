@@ -12,11 +12,13 @@ import (
 	"net/netip"
 	"net/url"
 	"slices"
+	"time"
 
 	"github.com/AndresFZV/httpaas-go/internal/deploy"
 	"github.com/AndresFZV/httpaas-go/internal/deployment"
 	"github.com/AndresFZV/httpaas-go/internal/health"
 	"github.com/AndresFZV/httpaas-go/internal/instance"
+	"github.com/AndresFZV/httpaas-go/internal/metrics"
 	"github.com/AndresFZV/httpaas-go/internal/power"
 )
 
@@ -65,6 +67,7 @@ type Config struct {
 	LastIP       netip.Addr
 	TemplatesDir string
 	StaticDir    string
+	ReadyMaxAge  time.Duration // antigüedad máxima de la verificación para /readyz; 0 usa 30 s
 }
 
 // Deps son los servicios que usa la interfaz.
@@ -74,6 +77,7 @@ type Deps struct {
 	Deployments Deployments
 	Monitor     HealthMonitor
 	Power       PowerController
+	Metrics     *metrics.Registry // puede ser nil
 }
 
 // Handler agrupa las dependencias de los handlers HTTP de la aplicación.
@@ -84,6 +88,7 @@ type Handler struct {
 	deployments Deployments
 	monitor     HealthMonitor
 	power       PowerController
+	metrics     *metrics.Registry
 	pages       map[string]*template.Template
 }
 
@@ -94,15 +99,18 @@ func NewHandler(cfg Config, deps Deps) (*Handler, error) {
 		return nil, err
 	}
 
-	return &Handler{
+	h := &Handler{
 		cfg:         cfg,
 		store:       deps.Store,
 		provisioner: deps.Provisioner,
 		deployments: deps.Deployments,
 		monitor:     deps.Monitor,
 		power:       deps.Power,
+		metrics:     deps.Metrics,
 		pages:       pages,
-	}, nil
+	}
+	h.registerGauges(deps.Metrics)
+	return h, nil
 }
 
 // RegisterRoutes registra las rutas de la aplicación en mux.
@@ -122,6 +130,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /infrastructure/ns/power/{action}", h.nsPower)
 	mux.HandleFunc("GET /api/deployments/{id}", h.deploymentStatus)
 	mux.HandleFunc("GET /api/status", h.statusAPI)
+
+	mux.HandleFunc("GET /healthz", h.healthz)
+	mux.HandleFunc("GET /readyz", h.readyz)
+	mux.HandleFunc("GET /metrics", h.metricsEndpoint)
 }
 
 // stats son los números de las tarjetas del dashboard.

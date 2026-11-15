@@ -15,6 +15,7 @@ import (
 	"github.com/AndresFZV/httpaas-go/internal/health"
 	"github.com/AndresFZV/httpaas-go/internal/hostnet"
 	"github.com/AndresFZV/httpaas-go/internal/instance"
+	"github.com/AndresFZV/httpaas-go/internal/metrics"
 	"github.com/AndresFZV/httpaas-go/internal/power"
 	"github.com/AndresFZV/httpaas-go/internal/provision"
 	"github.com/AndresFZV/httpaas-go/internal/remote"
@@ -41,6 +42,9 @@ const (
 	healthFastInterval = 3 * time.Second
 )
 
+// publicPaths no piden autenticación: los consultan orquestadores y balanceadores de carga.
+var publicPaths = []string{"/healthz", "/readyz"}
+
 func main() {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -54,6 +58,8 @@ func main() {
 	}
 	slog.SetDefault(logger)
 	cfg.logSummary()
+
+	reg := metrics.New()
 
 	firstIP := netip.MustParseAddr(firstInstanceIP)
 	lastIP := netip.MustParseAddr(lastInstanceIP)
@@ -102,6 +108,7 @@ func main() {
 	if err != nil {
 		fatal("no se pudo preparar los despliegues", err)
 	}
+	deployments.SetObserver(metrics.NewDeployments(reg))
 
 	powerCtl := power.NewController(vms)
 
@@ -141,6 +148,7 @@ func main() {
 		Deployments: deployments,
 		Monitor:     monitor,
 		Power:       powerCtl,
+		Metrics:     reg,
 	})
 	if err != nil {
 		fatal("no se pudo inicializar la aplicación", err)
@@ -149,12 +157,17 @@ func main() {
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
+	// De afuera hacia adentro: registro y métricas de cada petición, protecciones de seguridad y rutas.
+	app := web.Instrument(web.Secure(mux, web.SecurityConfig{
+		AuthUser:     cfg.AuthUser,
+		AuthPassword: cfg.AuthPassword,
+		PublicPaths:  publicPaths,
+		Metrics:      reg,
+	}), reg)
+
 	server := &http.Server{
-		Addr: cfg.Addr,
-		Handler: web.Secure(mux, web.SecurityConfig{
-			AuthUser:     cfg.AuthUser,
-			AuthPassword: cfg.AuthPassword,
-		}),
+		Addr:              cfg.Addr,
+		Handler:           app,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       readTimeout,
 		WriteTimeout:      writeTimeout,

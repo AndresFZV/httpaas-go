@@ -68,6 +68,7 @@ type Config struct {
 	TemplatesDir string
 	StaticDir    string
 	ReadyMaxAge  time.Duration // antigüedad máxima de la verificación para /readyz; 0 usa 30 s
+	OpenAPIFile  string        // especificación que se publica en /api/v1/openapi.yaml; vacío la desactiva
 }
 
 // Deps son los servicios que usa la interfaz.
@@ -134,6 +135,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /healthz", h.healthz)
 	mux.HandleFunc("GET /readyz", h.readyz)
 	mux.HandleFunc("GET /metrics", h.metricsEndpoint)
+
+	h.registerAPIRoutes(mux)
 }
 
 // stats son los números de las tarjetas del dashboard.

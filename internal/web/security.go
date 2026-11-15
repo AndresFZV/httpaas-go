@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/AndresFZV/httpaas-go/internal/metrics"
 )
@@ -18,7 +19,12 @@ const (
 	reasonCrossOrigin    = "otro_origen"
 	reasonNoCredentials  = "sin_credenciales"
 	reasonBadCredentials = "credenciales_incorrectas"
+	reasonNoToken        = "sin_token"
+	reasonBadToken       = "token_incorrecto"
 )
+
+// apiSpecPath es la especificación OpenAPI, que se publica sin token para poder leer la documentación.
+const apiSpecPath = apiPrefix + "openapi.yaml"
 
 // contentSecurityPolicy solo permite recursos del propio servidor, más las fuentes de Google Fonts.
 // Las plantillas no usan scripts ni estilos en línea, así que no hace falta 'unsafe-inline'.
@@ -41,6 +47,10 @@ type SecurityConfig struct {
 	// los orquestadores y balanceadores de carga.
 	PublicPaths []string
 
+	// APIToken es el token que deben enviar los clientes de /api/v1/ en la cabecera
+	// Authorization: Bearer <token>. Si está vacío, la API REST queda deshabilitada.
+	APIToken string
+
 	// Metrics recibe los rechazos; puede ser nil.
 	Metrics *metrics.Registry
 }
@@ -51,8 +61,8 @@ func (c SecurityConfig) AuthEnabled() bool {
 }
 
 // Secure envuelve next con las protecciones de la aplicación, de afuera hacia adentro:
-// cabeceras de seguridad, autenticación básica (si está activa) y protección CSRF.
-// Las cabeceras van primero para que también acompañen las respuestas 401 y 403.
+// cabeceras de seguridad, autenticación (token para /api/v1/ y básica para el resto, si está activa)
+// y protección CSRF. Las cabeceras van primero para que también acompañen las respuestas 401 y 403.
 func Secure(next http.Handler, cfg SecurityConfig) http.Handler {
 	cfg.Metrics.Counter(metricRejections, "Peticiones rechazadas por las protecciones de seguridad, por motivo.")
 
@@ -67,7 +77,46 @@ func Secure(next http.Handler, cfg SecurityConfig) http.Handler {
 	if cfg.AuthEnabled() {
 		handler = basicAuth(handler, cfg)
 	}
+	handler = apiTokenAuth(handler, cfg)
 	return securityHeaders(handler)
+}
+
+// apiTokenAuth exige el token de la API en las rutas /api/v1/; las demás pasan a la autenticación básica.
+// La comparación se hace en tiempo constante, igual que la de la autenticación básica.
+func apiTokenAuth(next http.Handler, cfg SecurityConfig) http.Handler {
+	wantToken := sha256.Sum256([]byte(cfg.APIToken))
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, apiPrefix) || r.URL.Path == apiSpecPath {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if cfg.APIToken == "" {
+			writeAPIJSON(w, http.StatusServiceUnavailable, apiErrorBody{Error: apiError{
+				Codigo:  "api_deshabilitada",
+				Mensaje: "la API REST está deshabilitada; defina HTTPAAS_API_TOKEN para activarla",
+			}})
+			return
+		}
+
+		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		reason := reasonNoToken
+		if ok && got != "" {
+			gotHash := sha256.Sum256([]byte(got))
+			if subtle.ConstantTimeCompare(gotHash[:], wantToken[:]) == 1 {
+				next.ServeHTTP(w, r)
+				return
+			}
+			reason = reasonBadToken
+		}
+
+		reject(cfg.Metrics, r, reason)
+		w.Header().Set("WWW-Authenticate", `Bearer realm="HTTPaaS API"`)
+		writeAPIJSON(w, http.StatusUnauthorized, apiErrorBody{Error: apiError{
+			Codigo:  "no_autorizado",
+			Mensaje: "envíe el token de la API en la cabecera Authorization: Bearer <token>",
+		}})
+	})
 }
 
 // reject registra en el log y en las métricas una petición rechazada.
@@ -98,7 +147,8 @@ func basicAuth(next http.Handler, cfg SecurityConfig) http.Handler {
 	wantPassword := sha256.Sum256([]byte(cfg.AuthPassword))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if slices.Contains(cfg.PublicPaths, r.URL.Path) {
+		// La API usa su propio token (apiTokenAuth), así los scripts no necesitan usuario y contraseña.
+		if slices.Contains(cfg.PublicPaths, r.URL.Path) || strings.HasPrefix(r.URL.Path, apiPrefix) {
 			next.ServeHTTP(w, r)
 			return
 		}

@@ -5,6 +5,7 @@
 # Estado en tiempo de ejecución
 data/
 uploads/
+*.log
 
 # Llaves y secretos (clave TSIG, llaves SSH)
 *.key

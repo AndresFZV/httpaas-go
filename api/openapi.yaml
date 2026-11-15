@@ -1,0 +1,340 @@
+openapi: 3.0.3
+info:
+  title: HTTPaaS API
+  version: 1.0.0
+  description: |
+    API REST de la plataforma de HTTP como servicio. Permite crear instancias de Apache,
+    publicar contenido web, controlar el encendido de las máquinas virtuales y eliminarlas.
+
+    Las operaciones que tardan (crear y publicar) responden **202 Accepted** con la cabecera
+    `Location`, donde se consulta el avance del despliegue.
+
+    Todos los errores tienen el mismo formato: `{"error": {"codigo": "...", "mensaje": "..."}}`.
+servers:
+  - url: http://localhost:8080/api/v1
+security:
+  - token: []
+
+paths:
+  /instances:
+    get:
+      summary: Listar las instancias
+      operationId: listarInstancias
+      tags: [Instancias]
+      responses:
+        "200":
+          description: Instancias registradas con su estado actual.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Instancia"
+        "401":
+          $ref: "#/components/responses/NoAutorizado"
+
+  /instances/{hostname}:
+    parameters:
+      - $ref: "#/components/parameters/Hostname"
+    get:
+      summary: Consultar una instancia
+      operationId: consultarInstancia
+      tags: [Instancias]
+      responses:
+        "200":
+          description: La instancia.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Instancia"
+        "401":
+          $ref: "#/components/responses/NoAutorizado"
+        "404":
+          $ref: "#/components/responses/Error"
+    delete:
+      summary: Eliminar una instancia
+      description: Quita el registro DNS, apaga y borra la VM con su disco diferencial y libera la IP.
+      operationId: eliminarInstancia
+      tags: [Instancias]
+      responses:
+        "204":
+          description: Instancia eliminada.
+        "401":
+          $ref: "#/components/responses/NoAutorizado"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+
+  /instances/{hostname}/deployments:
+    parameters:
+      - $ref: "#/components/parameters/Hostname"
+    post:
+      summary: Publicar contenido en una instancia existente
+      operationId: publicarContenido
+      tags: [Despliegues]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  format: binary
+                  description: Archivo .zip con index.html en la raíz.
+      responses:
+        "202":
+          $ref: "#/components/responses/DespliegueAceptado"
+        "401":
+          $ref: "#/components/responses/NoAutorizado"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "413":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+
+  /instances/{hostname}/power/{accion}:
+    parameters:
+      - $ref: "#/components/parameters/Hostname"
+      - name: accion
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [start, stop, restart]
+    post:
+      summary: Encender, apagar o reiniciar una instancia
+      description: El encendido y el reinicio se envían de inmediato; el apagado ordenado sigue en segundo plano.
+      operationId: controlarEnergia
+      tags: [Instancias]
+      responses:
+        "202":
+          description: Acción aceptada.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  vm:
+                    type: string
+                  accion:
+                    type: string
+                  estado:
+                    type: string
+                    example: aceptada
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/NoAutorizado"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+
+  /deployments:
+    post:
+      summary: Crear una instancia y, opcionalmente, publicar contenido
+      operationId: crearDespliegue
+      tags: [Despliegues]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [hostname]
+              properties:
+                hostname:
+                  type: string
+                  pattern: "^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$"
+                  example: catalogo
+                content:
+                  type: string
+                  format: binary
+                  description: Archivo .zip con index.html en la raíz. Si se omite, solo se crea la instancia.
+      responses:
+        "202":
+          $ref: "#/components/responses/DespliegueAceptado"
+        "401":
+          $ref: "#/components/responses/NoAutorizado"
+        "409":
+          $ref: "#/components/responses/Error"
+        "413":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+
+  /deployments/{id}:
+    parameters:
+      - $ref: "#/components/parameters/DespliegueID"
+    get:
+      summary: Consultar el avance de un despliegue
+      operationId: consultarDespliegue
+      tags: [Despliegues]
+      responses:
+        "200":
+          description: Estado del despliegue.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Despliegue"
+        "401":
+          $ref: "#/components/responses/NoAutorizado"
+        "404":
+          $ref: "#/components/responses/Error"
+
+  /deployments/{id}/retry:
+    parameters:
+      - $ref: "#/components/parameters/DespliegueID"
+    post:
+      summary: Reintentar un despliegue fallido
+      description: Usa el mismo nombre y el mismo .zip. Si la instancia ya existía, solo repite la publicación y la verificación.
+      operationId: reintentarDespliegue
+      tags: [Despliegues]
+      responses:
+        "202":
+          $ref: "#/components/responses/DespliegueAceptado"
+        "401":
+          $ref: "#/components/responses/NoAutorizado"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+
+  /openapi.yaml:
+    get:
+      summary: Esta especificación
+      operationId: especificacion
+      tags: [Documentación]
+      security: []
+      responses:
+        "200":
+          description: Especificación OpenAPI en YAML.
+
+components:
+  securitySchemes:
+    token:
+      type: http
+      scheme: bearer
+      description: Token definido en la variable HTTPAAS_API_TOKEN del servidor.
+
+  parameters:
+    Hostname:
+      name: hostname
+      in: path
+      required: true
+      schema:
+        type: string
+        example: paisajes
+    DespliegueID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        example: 3f9c1a2b4d5e6f70
+
+  schemas:
+    Instancia:
+      type: object
+      properties:
+        hostname:
+          type: string
+          example: paisajes
+        ip:
+          type: string
+          example: 192.168.10.30
+        fqdn:
+          type: string
+          example: paisajes.cloud.local
+        url:
+          type: string
+          example: http://paisajes.cloud.local
+        estado:
+          type: string
+          enum: [activa, sin_respuesta, apagada, creando, encendiendo, apagando, reiniciando, verificando]
+        creada:
+          type: string
+          format: date-time
+
+    Despliegue:
+      type: object
+      properties:
+        id:
+          type: string
+        hostname:
+          type: string
+        tipo:
+          type: string
+          enum: [creacion, publicacion]
+        estado:
+          type: string
+          enum: [en_curso, exito, error]
+        etapa:
+          type: string
+          description: Etapa en curso, o la etapa que falló.
+          enum: [validar, crear_vm, esperar_arranque, configurar, esperar_ip, registrar_dns, publicar, verificar]
+        porcentaje:
+          type: integer
+          minimum: 0
+          maximum: 100
+        ip:
+          type: string
+        url:
+          type: string
+        con_contenido:
+          type: boolean
+        error:
+          type: string
+        componente:
+          type: string
+          description: Componente de la infraestructura donde ocurrió el error.
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            codigo:
+              type: string
+              example: hostname_en_uso
+            mensaje:
+              type: string
+              example: ya existe una instancia con ese nombre
+
+  responses:
+    DespliegueAceptado:
+      description: Despliegue aceptado; corre en segundo plano.
+      headers:
+        Location:
+          description: Ruta para consultar el avance.
+          schema:
+            type: string
+            example: /api/v1/deployments/3f9c1a2b4d5e6f70
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Despliegue"
+    NoAutorizado:
+      description: Falta el token o no es válido.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Error:
+      description: Error con su código y mensaje.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"

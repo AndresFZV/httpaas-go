@@ -18,6 +18,7 @@ Esta aplicación web, desarrollada en **Go**, es el punto de acceso para los usu
 - **Eliminar** instancias: apaga y borra la VM, quita el registro DNS y libera la IP.
 - Interfaz responsive, actualizada en vivo sin recargar la página.
 - **Trazabilidad**: cada solicitud, acción y cambio de estado queda en el log.
+- **API REST** (`/api/v1`) con autenticación por token y especificación OpenAPI, para crear, publicar, controlar y eliminar instancias desde scripts.
 
 Los dos flujos del enunciado están cubiertos:
 
@@ -138,7 +139,7 @@ export HTTPAAS_AUTH_PASSWORD="una-contraseña-larga"
 go run .
 ```
 
-Las dos variables de autenticación son opcionales: si no se definen, la interfaz no pide usuario ni contraseña y el log lo advierte al arrancar.
+Las dos variables de autenticación son opcionales: si no se definen, la interfaz no pide usuario ni contraseña y el log lo advierte al arrancar. Para activar la API REST, defina también `HTTPAAS_API_TOKEN` (ver *API REST*).
 
 Abrir <http://localhost:8080>. El log de arranque muestra la configuración y advierte si falta VBoxManage, el disco o la llave.
 
@@ -177,6 +178,7 @@ Todos los valores tienen un predeterminado y se pueden cambiar con variables de 
 | `HTTPAAS_AUTH_PASSWORD` | *(vacío)* | Contraseña de la autenticación básica; vacía la desactiva |
 | `HTTPAAS_LOG_FORMAT` | `text` | Formato del log: `text` (clave=valor) o `json` |
 | `HTTPAAS_LOG_LEVEL` | `info` | Nivel mínimo del log: `debug`, `info`, `warn` o `error` |
+| `HTTPAAS_API_TOKEN` | *(vacío)* | Token de la API REST; vacío la deshabilita |
 
 Valores fijos en el código: rango de IPs `192.168.10.30`–`192.168.10.254`, 512 MB y 1 CPU por VM, TTL de 300 s para los registros DNS, verificación de la infraestructura cada 5 s (cada 3 s durante transiciones o fallas).
 
@@ -200,6 +202,7 @@ Valores fijos en el código: rango de IPs `192.168.10.30`–`192.168.10.254`, 51
 │   └── web/               # handlers HTTP, vistas y protecciones de seguridad
 ├── templates/             # plantillas HTML (layout, partes y páginas)
 ├── static/                # CSS, JavaScript e íconos
+├── api/                   # especificación OpenAPI de la API REST
 ├── monitoring/            # Prometheus en Docker para consultar las métricas
 └── ejemplos/              # sitios de prueba (paisajes y negocios)
 ```
@@ -226,11 +229,63 @@ Solo usa la biblioteca estándar de Go: sin frameworks web ni dependencias exter
 | `GET` | `/readyz` | La app puede atender: verificación reciente y VirtualBox disponible; 503 si no (sin autenticación) |
 | `GET` | `/metrics` | Métricas en formato Prometheus |
 
+Las rutas `/api/status` y `/api/deployments/{id}` son internas de la interfaz. Para scripts e integraciones está la API REST versionada.
+
+## API REST
+
+La API permite hacer desde scripts lo mismo que la interfaz. Se activa definiendo un token:
+
+```bash
+export HTTPAAS_API_TOKEN="$(openssl rand -hex 24)"
+echo "$HTTPAAS_API_TOKEN"
+```
+
+Todas las peticiones llevan `Authorization: Bearer <token>`:
+
+| Método | Ruta | Acción | Respuesta |
+|---|---|---|---|
+| `GET` | `/api/v1/instances` | Listar las instancias con su estado | 200 |
+| `GET` | `/api/v1/instances/{hostname}` | Consultar una instancia | 200 |
+| `POST` | `/api/v1/deployments` | Crear una instancia (`hostname` y `content` opcional, multipart) | 202 + `Location` |
+| `GET` | `/api/v1/deployments/{id}` | Consultar el avance de un despliegue | 200 |
+| `POST` | `/api/v1/deployments/{id}/retry` | Reintentar un despliegue fallido | 202 + `Location` |
+| `POST` | `/api/v1/instances/{hostname}/deployments` | Publicar un `.zip` en una instancia existente | 202 + `Location` |
+| `POST` | `/api/v1/instances/{hostname}/power/{start,stop,restart}` | Encender, apagar o reiniciar | 202 |
+| `DELETE` | `/api/v1/instances/{hostname}` | Eliminar una instancia | 204 |
+| `GET` | `/api/v1/openapi.yaml` | Especificación OpenAPI (sin token) | 200 |
+
+Las operaciones que tardan responden **202 Accepted** con la cabecera `Location`, donde se consulta el avance. Los errores tienen siempre el mismo formato, con un código estable:
+
+```json
+{"error": {"codigo": "hostname_en_uso", "mensaje": "ya existe una instancia con ese nombre"}}
+```
+
+Ejemplo completo desde Git Bash:
+
+```bash
+API=http://localhost:8080/api/v1
+AUTH="Authorization: Bearer $HTTPAAS_API_TOKEN"
+
+# Crear una instancia y publicar un sitio; la respuesta trae la ruta del despliegue
+curl -i -H "$AUTH" -F hostname=catalogo -F content=@paisajes.zip $API/deployments
+
+# Consultar el avance (reemplazar el id por el de la cabecera Location)
+curl -H "$AUTH" $API/deployments/3f9c1a2b4d5e6f70
+
+# Listar, apagar y eliminar
+curl -H "$AUTH" $API/instances
+curl -X POST -H "$AUTH" $API/instances/catalogo/power/stop
+curl -X DELETE -H "$AUTH" -o /dev/null -w "%{http_code}\n" $API/instances/catalogo
+```
+
+La especificación completa está en [`api/openapi.yaml`](api/openapi.yaml). Se puede abrir en <https://editor.swagger.io> para verla como documentación interactiva.
+
 ## Seguridad
 
 - **Protección CSRF**: los `POST` que llegan desde otro sitio se rechazan con 403 (`http.CrossOriginProtection`, que revisa las cabeceras `Sec-Fetch-Site` y `Origin`). Los clientes que no son navegadores, como `curl`, no envían esas cabeceras y no se ven afectados. Cada rechazo queda en el log con `componente=seguridad` y se cuenta en la métrica `httpaas_security_rejections_total`.
 - **Cabeceras de seguridad** en todas las respuestas: `Content-Security-Policy` (solo recursos del propio servidor y de Google Fonts), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` y `Referrer-Policy: same-origin`.
 - **Autenticación básica opcional** con `HTTPAAS_AUTH_USER` y `HTTPAAS_AUTH_PASSWORD`. La comparación se hace en tiempo constante. `/healthz` y `/readyz` no la piden, porque los consultan orquestadores y balanceadores de carga; `/metrics` sí.
+- **Token de la API**: las rutas `/api/v1/` piden `Authorization: Bearer <token>` (`HTTPAAS_API_TOKEN`) en lugar de usuario y contraseña. Sin token configurado, la API responde 503. La especificación `/api/v1/openapi.yaml` es pública.
 - **Verificación de llaves de host SSH**: la app usa su propio `known_hosts`. La llave de `ns` se registra a mano y se exige (`StrictHostKeyChecking=yes`). La de cada instancia se registra en la primera conexión y se verifica en las siguientes (`accept-new`). Cuando una IP pasa a otra VM (la IP temporal en cada creación, o la IP de una instancia eliminada), la app borra la llave anterior.
 - **Límites del `.zip`**: 50 MB comprimido, 200 MB descomprimido y 5000 archivos. El tamaño descomprimido se mide descomprimiendo el archivo, porque el que declara el `.zip` se puede falsificar.
 - **Tiempos máximos del servidor HTTP**: 10 s para las cabeceras, 2 min para leer la petición y escribir la respuesta, y 60 s para conexiones inactivas.
@@ -246,6 +301,7 @@ Cada evento es una línea con campos `clave=valor` (o JSON con `HTTPAAS_LOG_FORM
 | `app` | Arranque, configuración y advertencias |
 | `http` | Cada petición: método, ruta, código, duración e identificador (`peticion_id`, también en la cabecera `X-Request-ID`) |
 | `web` | Solicitudes de la interfaz: despliegues, publicaciones, reintentos y acciones de energía |
+| `api` | Las mismas solicitudes, recibidas por la API REST |
 | `despliegue` | Inicio, cada etapa completada con su duración, y resultado. Todas las líneas llevan `despliegue_id` |
 | `aprovisionamiento` | Eliminación de instancias, rollback y advertencias de red |
 | `energia` | Encendido, apagado y reinicio de VMs |

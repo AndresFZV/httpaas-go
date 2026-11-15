@@ -1,0 +1,15 @@
+# Prometheus consulta las métricas de la app cada 15 segundos.
+# host.docker.internal es el anfitrión Windows visto desde el contenedor.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: httpaas
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8080"]
+    # /metrics pide la misma autenticación que la interfaz. La contraseña se lee de un archivo
+    # que no se sube al repositorio (ver la sección Observabilidad del README).
+    basic_auth:
+      username: admin
+      password_file: /etc/prometheus/httpaas-password

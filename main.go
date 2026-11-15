@@ -142,6 +142,7 @@ func main() {
 		LastIP:       lastIP,
 		TemplatesDir: "templates",
 		StaticDir:    "static",
+		OpenAPIFile:  filepath.Join("api", "openapi.yaml"),
 	}, web.Deps{
 		Store:       store,
 		Provisioner: provisioner,
@@ -162,6 +163,7 @@ func main() {
 		AuthUser:     cfg.AuthUser,
 		AuthPassword: cfg.AuthPassword,
 		PublicPaths:  publicPaths,
+		APIToken:     cfg.APIToken,
 		Metrics:      reg,
 	}), reg)
 

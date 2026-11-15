@@ -40,6 +40,7 @@ type config struct {
 	AuthPassword string     // HTTPAAS_AUTH_PASSWORD
 	LogFormat    string     // HTTPAAS_LOG_FORMAT
 	LogLevel     string     // HTTPAAS_LOG_LEVEL
+	APIToken     string     // HTTPAAS_API_TOKEN
 }
 
 // loadConfig lee la configuración de las variables de entorno con sus valores por defecto.
@@ -77,11 +78,12 @@ func loadConfig() (config, error) {
 		AuthPassword: getEnv("HTTPAAS_AUTH_PASSWORD", ""),
 		LogFormat:    getEnv("HTTPAAS_LOG_FORMAT", "text"),
 		LogLevel:     getEnv("HTTPAAS_LOG_LEVEL", "info"),
+		APIToken:     getEnv("HTTPAAS_API_TOKEN", ""),
 	}, nil
 }
 
 // logSummary registra la configuración al arrancar y avisa si falta algún archivo necesario.
-// La contraseña de la autenticación nunca se escribe en el log.
+// La contraseña de la autenticación y el token de la API nunca se escriben en el log.
 func (c config) logSummary() {
 	slog.Info("configuración cargada",
 		"componente", "app",
@@ -102,6 +104,12 @@ func (c config) logSummary() {
 	} else {
 		slog.Warn("la interfaz no pide usuario ni contraseña; defina HTTPAAS_AUTH_USER y HTTPAAS_AUTH_PASSWORD para activarla",
 			"componente", "app")
+	}
+
+	if c.APIToken != "" {
+		slog.Info("API REST activa en /api/v1/", "componente", "app")
+	} else {
+		slog.Info("API REST deshabilitada; defina HTTPAAS_API_TOKEN para activarla", "componente", "app")
 	}
 
 	for name, path := range map[string]string{

@@ -40,6 +40,8 @@ func newTestClient(f *fakeRunner) *Client {
 			User:           "deploy",
 			KeyFile:        "llave",
 			ConnectTimeout: 5 * time.Second,
+			KnownHostsFile: "data/known_hosts",
+			StrictHosts:    []string{"192.168.10.10"},
 		},
 		run: f.run,
 	}
@@ -105,5 +107,36 @@ func TestWaitForSSHStopsWhenContextExpires(t *testing.T) {
 	err := c.WaitForSSH(ctx, "192.168.10.20", 5*time.Millisecond)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("WaitForSSH() = %v, se esperaba %v", err, context.DeadlineExceeded)
+	}
+}
+
+func TestHostKeyChecking(t *testing.T) {
+	tests := []struct {
+		name string
+		host string
+		want string
+	}{
+		{"instancia: registra la llave en la primera conexión", "192.168.10.30", "StrictHostKeyChecking=accept-new"},
+		{"ns: exige la llave registrada de antemano", "192.168.10.10", "StrictHostKeyChecking=yes"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &fakeRunner{}
+			c := newTestClient(f)
+
+			if err := c.Run(context.Background(), tt.host, "true"); err != nil {
+				t.Fatalf("Run() error: %v", err)
+			}
+			if !slices.Contains(f.args, tt.want) {
+				t.Errorf("argumentos = %v, falta %q", f.args, tt.want)
+			}
+			if slices.Contains(f.args, "StrictHostKeyChecking=no") {
+				t.Error("no debe desactivar la verificación de llaves de host")
+			}
+			if !slices.Contains(f.args, `UserKnownHostsFile="data/known_hosts"`) {
+				t.Errorf("argumentos = %v, falta el archivo known_hosts entre comillas", f.args)
+			}
+		})
 	}
 }

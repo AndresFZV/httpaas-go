@@ -10,8 +10,12 @@ import (
 	"strings"
 )
 
-// MaxArchiveSize es el tamaño máximo permitido para el .zip del contenido web.
-const MaxArchiveSize int64 = 50 << 20 // 50 MB
+// Límites del .zip del contenido web.
+const (
+	MaxArchiveSize      int64 = 50 << 20  // tamaño del .zip: 50 MB
+	MaxUncompressedSize int64 = 200 << 20 // contenido descomprimido: 200 MB
+	MaxArchiveEntries         = 5000      // archivos y carpetas dentro del .zip
+)
 
 const indexFile = "index.html"
 
@@ -19,6 +23,7 @@ var (
 	ErrArchiveMissing    = errors.New("debe seleccionar un archivo .zip con el contenido web")
 	ErrArchiveExtension  = errors.New("el archivo debe tener extensión .zip")
 	ErrArchiveTooLarge   = fmt.Errorf("el archivo supera el tamaño máximo de %d MB", MaxArchiveSize>>20)
+	ErrArchiveTooBig     = fmt.Errorf("el contenido descomprimido supera %d MB o tiene más de %d archivos", MaxUncompressedSize>>20, MaxArchiveEntries)
 	ErrArchiveCorrupt    = errors.New("el archivo no es un .zip válido")
 	ErrArchiveUnsafePath = errors.New("el .zip contiene rutas no permitidas (absolutas o con ..)")
 	ErrArchiveNoIndex    = errors.New("el .zip debe tener un index.html en la raíz; comprima el contenido de la carpeta, no la carpeta")
@@ -41,7 +46,12 @@ func ValidateArchive(r io.ReaderAt, size int64, filename string) error {
 		return ErrArchiveCorrupt
 	}
 
+	if len(zr.File) > MaxArchiveEntries {
+		return ErrArchiveTooBig
+	}
+
 	hasIndex := false
+	var total int64
 	for _, f := range zr.File {
 		name := normalizeEntryName(f.Name)
 		if !isSafeEntry(name) {
@@ -50,12 +60,46 @@ func ValidateArchive(r io.ReaderAt, size int64, filename string) error {
 		if name == indexFile {
 			hasIndex = true
 		}
+
+		n, err := uncompressedSize(f, MaxUncompressedSize-total)
+		if err != nil {
+			return err
+		}
+		total += n
 	}
 
 	if !hasIndex {
 		return ErrArchiveNoIndex
 	}
 	return nil
+}
+
+// uncompressedSize descomprime f sin guardarlo y devuelve cuántos bytes ocupa.
+// Se descomprime de verdad porque el tamaño declarado en el .zip se puede falsificar;
+// archive/zip devuelve un error si el contenido real no coincide con el declarado.
+// Si f ocupa más de limit bytes, devuelve ErrArchiveTooBig sin terminar de leerlo.
+func uncompressedSize(f *zip.File, limit int64) (int64, error) {
+	if f.FileInfo().IsDir() {
+		return 0, nil
+	}
+	if f.UncompressedSize64 > uint64(limit) {
+		return 0, ErrArchiveTooBig
+	}
+
+	rc, err := f.Open()
+	if err != nil {
+		return 0, ErrArchiveCorrupt
+	}
+	defer rc.Close()
+
+	n, err := io.Copy(io.Discard, io.LimitReader(rc, limit+1))
+	if err != nil {
+		return 0, ErrArchiveCorrupt
+	}
+	if n > limit {
+		return 0, ErrArchiveTooBig
+	}
+	return n, nil
 }
 
 // normalizeEntryName convierte las barras invertidas a barras normales.

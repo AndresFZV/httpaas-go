@@ -52,6 +52,12 @@ type NeighborCache interface {
 	Forget(ctx context.Context, ip netip.Addr) error
 }
 
+// HostKeyStore olvida las llaves SSH registradas para una IP. Por la misma razón que la
+// caché ARP: cuando la IP pasa a otra VM, la llave anterior haría fallar la verificación.
+type HostKeyStore interface {
+	Forget(ctx context.Context, ip netip.Addr) error
+}
+
 // Config son los parámetros del aprovisionamiento.
 type Config struct {
 	TemplateIP   netip.Addr    // IP con la que arranca toda VM clonada de la plantilla
@@ -68,11 +74,13 @@ type Provisioner struct {
 	ssh       RemoteRunner
 	dns       DNSUpdater
 	neighbors NeighborCache
+	hostKeys  HostKeyStore
 }
 
 // New crea un Provisioner con sus dependencias.
-func New(cfg Config, store *instance.Store, vms VMManager, ssh RemoteRunner, dns DNSUpdater, neighbors NeighborCache) *Provisioner {
-	return &Provisioner{cfg: cfg, store: store, vms: vms, ssh: ssh, dns: dns, neighbors: neighbors}
+func New(cfg Config, store *instance.Store, vms VMManager, ssh RemoteRunner, dns DNSUpdater,
+	neighbors NeighborCache, hostKeys HostKeyStore) *Provisioner {
+	return &Provisioner{cfg: cfg, store: store, vms: vms, ssh: ssh, dns: dns, neighbors: neighbors, hostKeys: hostKeys}
 }
 
 // Provision reserva el nombre y la IP, crea la VM, le asigna hostname e IP definitivos
@@ -106,7 +114,8 @@ func (p *Provisioner) Delete(ctx context.Context, hostname string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if _, err := p.store.Get(hostname); err != nil {
+	inst, err := p.store.Get(hostname)
+	if err != nil {
 		return err
 	}
 
@@ -116,6 +125,10 @@ func (p *Provisioner) Delete(ctx context.Context, hostname string) error {
 	}
 	if err := p.vms.DeleteVM(ctx, hostname); err != nil {
 		return err
+	}
+	// La IP queda libre para otra VM, que tendrá otra llave de host.
+	if err := p.hostKeys.Forget(ctx, inst.IP); err != nil {
+		log.Printf("eliminar instancia %s: %v", hostname, err)
 	}
 	return p.store.Remove(hostname)
 }
@@ -150,10 +163,14 @@ func (p *Provisioner) createAndConfigure(ctx context.Context, inst instance.Inst
 	return true, nil
 }
 
-// waitForSSH limpia la caché ARP de ip y espera a que la VM responda por SSH en esa IP.
+// waitForSSH limpia la caché ARP y la llave de host de ip, y espera a que la VM responda por SSH.
+// Desde ese momento, la llave de la VM nueva queda registrada y se verifica en cada conexión.
 func (p *Provisioner) waitForSSH(ctx context.Context, ip netip.Addr) error {
 	if err := p.neighbors.Forget(ctx, ip); err != nil {
 		log.Printf("ADVERTENCIA: %v (¿la app se ejecuta como administrador?)", err)
+	}
+	if err := p.hostKeys.Forget(ctx, ip); err != nil {
+		log.Printf("ADVERTENCIA: %v", err)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.BootTimeout)

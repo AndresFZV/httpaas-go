@@ -92,7 +92,7 @@ func newTestProvisioner(t *testing.T, dns *fakeDNS) (*Provisioner, *instance.Sto
 		BootTimeout:  time.Second,
 		PollInterval: time.Millisecond,
 	}
-	return New(cfg, store, vms, ssh, dns, &fakeNeighbors{}), store, vms, ssh
+	return New(cfg, store, vms, ssh, dns, &fakeNeighbors{}, &fakeNeighbors{}), store, vms, ssh
 }
 
 func TestProvisionRunsAllSteps(t *testing.T) {
@@ -190,6 +190,39 @@ func TestProvisionForgetsARPBeforeWaiting(t *testing.T) {
 
 	if want := []string{"192.168.10.20", "192.168.10.30"}; !slices.Equal(neighbors.forgotten, want) {
 		t.Errorf("IPs limpiadas = %v, se esperaba %v", neighbors.forgotten, want)
+	}
+}
+
+func TestProvisionForgetsHostKeysBeforeWaiting(t *testing.T) {
+	dns := &fakeDNS{}
+	p, _, _, _ := newTestProvisioner(t, dns)
+	hostKeys := &fakeNeighbors{}
+	p.hostKeys = hostKeys
+
+	if _, err := p.Provision(context.Background(), "paisajes", nil); err != nil {
+		t.Fatalf("Provision() error: %v", err)
+	}
+
+	if want := []string{"192.168.10.20", "192.168.10.30"}; !slices.Equal(hostKeys.forgotten, want) {
+		t.Errorf("llaves olvidadas = %v, se esperaba %v", hostKeys.forgotten, want)
+	}
+}
+
+func TestDeleteForgetsHostKey(t *testing.T) {
+	dns := &fakeDNS{}
+	p, _, _, _ := newTestProvisioner(t, dns)
+	if _, err := p.Provision(context.Background(), "paisajes", nil); err != nil {
+		t.Fatalf("Provision() error: %v", err)
+	}
+	hostKeys := &fakeNeighbors{}
+	p.hostKeys = hostKeys
+
+	if err := p.Delete(context.Background(), "paisajes"); err != nil {
+		t.Fatalf("Delete() error: %v", err)
+	}
+
+	if want := []string{"192.168.10.30"}; !slices.Equal(hostKeys.forgotten, want) {
+		t.Errorf("llaves olvidadas = %v, se esperaba %v", hostKeys.forgotten, want)
 	}
 }
 

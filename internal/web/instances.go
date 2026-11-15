@@ -44,6 +44,7 @@ var validationErrors = []error{
 	deploy.ErrArchiveCorrupt,
 	deploy.ErrArchiveUnsafePath,
 	deploy.ErrArchiveNoIndex,
+	deploy.ErrArchiveTooBig,
 }
 
 // deploy valida el formulario y arranca el despliegue en segundo plano.

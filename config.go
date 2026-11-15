@@ -35,6 +35,9 @@ type config struct {
 	SSHKey       string     // HTTPAAS_SSH_KEY
 	TemplateIP   netip.Addr // HTTPAAS_TEMPLATE_IP
 	DNSServer    netip.Addr // HTTPAAS_DNS_SERVER
+	KnownHosts   string     // HTTPAAS_KNOWN_HOSTS
+	AuthUser     string     // HTTPAAS_AUTH_USER
+	AuthPassword string     // HTTPAAS_AUTH_PASSWORD
 }
 
 // loadConfig lee la configuración de las variables de entorno con sus valores por defecto.
@@ -53,9 +56,11 @@ func loadConfig() (config, error) {
 		return config{}, err
 	}
 
+	dataFile := getEnv("HTTPAAS_DATA_FILE", filepath.Join("data", "instances.json"))
+
 	return config{
 		Addr:         getEnv("HTTPAAS_ADDR", ":8080"),
-		DataFile:     getEnv("HTTPAAS_DATA_FILE", filepath.Join("data", "instances.json")),
+		DataFile:     dataFile,
 		VBoxManage:   getEnv("HTTPAAS_VBOXMANAGE", defaultVBoxManage()),
 		SSHPath:      getEnv("HTTPAAS_SSH", defaultSSH()),
 		TemplateDisk: getEnv("HTTPAAS_TEMPLATE_DISK", `C:\HTTPaaS\ApacheServer.vdi`),
@@ -65,6 +70,9 @@ func loadConfig() (config, error) {
 		SSHKey:       getEnv("HTTPAAS_SSH_KEY", filepath.Join(home, ".ssh", "httpaas")),
 		TemplateIP:   templateIP,
 		DNSServer:    dnsServer,
+		KnownHosts:   getEnv("HTTPAAS_KNOWN_HOSTS", filepath.Join(filepath.Dir(dataFile), "known_hosts")),
+		AuthUser:     getEnv("HTTPAAS_AUTH_USER", ""),
+		AuthPassword: getEnv("HTTPAAS_AUTH_PASSWORD", ""),
 	}, nil
 }
 
@@ -77,6 +85,14 @@ func (c config) logSummary() {
 	log.Printf("SSH: %s con llave %s", c.SSHUser, c.SSHKey)
 	log.Printf("cliente SSH: %s", c.SSHPath)
 	log.Printf("VM del servidor DNS: %s", c.NSVMName)
+
+	log.Printf("llaves de host SSH: %s", c.KnownHosts)
+
+	if c.AuthUser != "" && c.AuthPassword != "" {
+		log.Printf("autenticación básica activa para el usuario %q", c.AuthUser)
+	} else {
+		log.Printf("ADVERTENCIA: la interfaz no pide usuario ni contraseña; defina HTTPAAS_AUTH_USER y HTTPAAS_AUTH_PASSWORD para activarla")
+	}
 
 	for name, path := range map[string]string{
 		"VBoxManage":      c.VBoxManage,

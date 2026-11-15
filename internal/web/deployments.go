@@ -3,7 +3,7 @@ package web
 import (
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 
@@ -43,7 +43,7 @@ func (h *Handler) retryDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("despliegue %s reintentado como %s", id, newID)
+	slog.Info("solicitud de reintento", "componente", "web", "despliegue_anterior", id, "despliegue_id", newID)
 	redirectTo(w, r, "/deployments/"+url.PathEscape(newID))
 }
 
@@ -63,6 +63,6 @@ func (h *Handler) deploymentStatus(w http.ResponseWriter, r *http.Request) {
 
 func writeJSON(w http.ResponseWriter, value any) {
 	if err := json.NewEncoder(w).Encode(value); err != nil {
-		log.Printf("escribir JSON: %v", err)
+		slog.Error("no se pudo escribir el JSON", "componente", "web", "error", err)
 	}
 }

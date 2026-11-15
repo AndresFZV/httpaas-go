@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/netip"
 	"os"
 	"sync"
@@ -18,6 +18,21 @@ import (
 )
 
 const runTimeout = 10 * time.Minute
+
+// component identifica en el log los eventos de este paquete.
+const component = "despliegue"
+
+// Tipos de despliegue, para el log y las métricas.
+const (
+	KindCreate  = "creacion"    // crea la instancia y, si hay .zip, lo publica
+	KindPublish = "publicacion" // publica un .zip en una instancia existente
+)
+
+// Resultados de un despliegue, para el log y las métricas.
+const (
+	ResultSuccess = "exito"
+	ResultFailure = "error"
+)
 
 var (
 	ErrNotFound       = errors.New("el despliegue no existe")
@@ -43,6 +58,14 @@ type Provisioner interface {
 // Deployer publica el contenido de un .zip en una instancia.
 type Deployer interface {
 	Deploy(ctx context.Context, host string, archive io.Reader) error
+}
+
+// Observer recibe las mediciones de los despliegues, por ejemplo para exponerlas como métricas.
+type Observer interface {
+	// StepCompleted se llama al terminar con éxito una etapa, con su identificador (Step.Key).
+	StepCompleted(step string, d time.Duration)
+	// DeploymentFinished se llama al terminar un despliegue, con su tipo (Kind*) y resultado (Result*).
+	DeploymentFinished(kind, result string, d time.Duration)
 }
 
 // Verifier comprueba que la instancia responda por HTTP.
@@ -89,6 +112,22 @@ type job struct {
 	errMsg      string
 	ip          netip.Addr
 	republish   bool // publicación en una instancia existente
+	startedAt   time.Time
+	stepStarted time.Time
+}
+
+// kind devuelve el tipo de despliegue para el log y las métricas.
+func (j *job) kind() string {
+	if j.republish {
+		return KindPublish
+	}
+	return KindCreate
+}
+
+// logger devuelve un logger con los datos que identifican el despliegue,
+// para que todas sus líneas se puedan filtrar por despliegue_id.
+func (j *job) logger() *slog.Logger {
+	return slog.With("componente", component, "despliegue_id", j.id, "hostname", j.hostname, "tipo", j.kind())
 }
 
 // Manager ejecuta despliegues en segundo plano y guarda su estado en memoria.
@@ -100,6 +139,7 @@ type Manager struct {
 	deployer    Deployer
 	verifier    Verifier
 	onFinished  func(hostname string)
+	observer    Observer
 }
 
 // NewManager crea un Manager que guarda los .zip pendientes en uploadsDir.
@@ -282,10 +322,21 @@ func (m *Manager) OnFinished(fn func(hostname string)) {
 	m.onFinished = fn
 }
 
+// SetObserver registra quién recibe las mediciones de los despliegues. Debe registrarse antes de iniciarlos.
+func (m *Manager) SetObserver(o Observer) {
+	m.observer = o
+}
+
 // run ejecuta el despliegue desde la etapa from, registra el resultado y avisa que terminó.
 func (m *Manager) run(j *job, from int) {
 	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
 	defer cancel()
+
+	m.mu.Lock()
+	j.startedAt = time.Now()
+	j.stepStarted = j.startedAt
+	m.mu.Unlock()
+	j.logger().Info("despliegue iniciado", "desde", Steps[from].Key, "con_contenido", j.hasContent)
 
 	if err := m.execute(ctx, j, from); err != nil {
 		m.fail(j, err)
@@ -332,14 +383,44 @@ func (m *Manager) publish(ctx context.Context, j *job, ip netip.Addr) error {
 	return m.deployer.Deploy(ctx, ip.String(), file)
 }
 
+// setStep avanza el despliegue a step y registra la duración de la etapa que terminó.
 func (m *Manager) setStep(j *job, step int, ip netip.Addr) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	j.step = step
+	if step != j.step {
+		m.completeStep(j)
+		j.step = step
+	}
 	if ip.IsValid() {
 		j.ip = ip
 	}
+}
+
+// completeStep registra la duración de la etapa actual de j y empieza a medir la siguiente.
+// La publicación de un despliegue sin .zip se omite, así que no se mide. Debe llamarse con m.mu tomado.
+func (m *Manager) completeStep(j *job) {
+	now := time.Now()
+	elapsed := now.Sub(j.stepStarted)
+	j.stepStarted = now
+
+	if j.step == StepPublish && !j.hasContent {
+		return
+	}
+	key := Steps[j.step].Key
+	j.logger().Info("etapa completada", "etapa", key, "duracion_ms", elapsed.Milliseconds())
+	if m.observer != nil {
+		m.observer.StepCompleted(key, elapsed)
+	}
+}
+
+// finish registra la duración total del despliegue. Debe llamarse con m.mu tomado.
+func (m *Manager) finish(j *job, result string) time.Duration {
+	elapsed := time.Since(j.startedAt)
+	if m.observer != nil {
+		m.observer.DeploymentFinished(j.kind(), result, elapsed)
+	}
+	return elapsed
 }
 
 func (m *Manager) ipOf(j *job) netip.Addr {
@@ -352,7 +433,8 @@ func (m *Manager) fail(j *job, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	log.Printf("despliegue de %s falló en la etapa %q: %v", j.hostname, Steps[j.step].Label, err)
+	elapsed := m.finish(j, ResultFailure)
+	j.logger().Error("despliegue fallido", "etapa", Steps[j.step].Key, "duracion_s", elapsed.Round(time.Millisecond).Seconds(), "error", err)
 	j.status = StatusFailed
 	j.failedStep = j.step
 	j.errMsg = userMessage(j.step, err)
@@ -362,12 +444,14 @@ func (m *Manager) succeed(j *job) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	log.Printf("despliegue de %s completado", j.hostname)
+	m.completeStep(j)
+	elapsed := m.finish(j, ResultSuccess)
+	j.logger().Info("despliegue completado", "duracion_s", elapsed.Round(time.Millisecond).Seconds())
 	j.status = StatusSucceeded
 	j.step = len(Steps)
 	if j.archivePath != "" {
 		if err := os.Remove(j.archivePath); err != nil {
-			log.Printf("borrar archivo de %s: %v", j.hostname, err)
+			j.logger().Warn("no se pudo borrar el archivo subido", "error", err)
 		}
 		j.archivePath = ""
 	}

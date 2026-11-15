@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -223,14 +223,14 @@ func (h *Handler) newPage(r *http.Request, page, breadcrumb string) pageData {
 func (h *Handler) render(w http.ResponseWriter, status int, data pageData) {
 	tmpl, ok := h.pages[data.Page]
 	if !ok {
-		log.Printf("renderizar: no existe la página %q", data.Page)
+		slog.Error("no existe la página", "componente", "web", "pagina", data.Page)
 		http.Error(w, "Error interno del servidor", http.StatusInternalServerError)
 		return
 	}
 
 	var buf bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&buf, "layout", data); err != nil {
-		log.Printf("renderizar %s: %v", data.Page, err)
+		slog.Error("no se pudo renderizar la página", "componente", "web", "pagina", data.Page, "error", err)
 		http.Error(w, "Error interno del servidor", http.StatusInternalServerError)
 		return
 	}
@@ -238,7 +238,7 @@ func (h *Handler) render(w http.ResponseWriter, status int, data pageData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	if _, err := buf.WriteTo(w); err != nil {
-		log.Printf("escribir respuesta: %v", err)
+		slog.Error("no se pudo escribir la respuesta", "componente", "web", "error", err)
 	}
 }
 

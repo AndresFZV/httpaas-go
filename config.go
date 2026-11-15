@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -38,6 +38,8 @@ type config struct {
 	KnownHosts   string     // HTTPAAS_KNOWN_HOSTS
 	AuthUser     string     // HTTPAAS_AUTH_USER
 	AuthPassword string     // HTTPAAS_AUTH_PASSWORD
+	LogFormat    string     // HTTPAAS_LOG_FORMAT
+	LogLevel     string     // HTTPAAS_LOG_LEVEL
 }
 
 // loadConfig lee la configuración de las variables de entorno con sus valores por defecto.
@@ -73,25 +75,33 @@ func loadConfig() (config, error) {
 		KnownHosts:   getEnv("HTTPAAS_KNOWN_HOSTS", filepath.Join(filepath.Dir(dataFile), "known_hosts")),
 		AuthUser:     getEnv("HTTPAAS_AUTH_USER", ""),
 		AuthPassword: getEnv("HTTPAAS_AUTH_PASSWORD", ""),
+		LogFormat:    getEnv("HTTPAAS_LOG_FORMAT", "text"),
+		LogLevel:     getEnv("HTTPAAS_LOG_LEVEL", "info"),
 	}, nil
 }
 
-// logSummary muestra la configuración al arrancar y avisa si falta algún archivo necesario.
+// logSummary registra la configuración al arrancar y avisa si falta algún archivo necesario.
+// La contraseña de la autenticación nunca se escribe en el log.
 func (c config) logSummary() {
-	log.Printf("VBoxManage: %s", c.VBoxManage)
-	log.Printf("disco plantilla: %s", c.TemplateDisk)
-	log.Printf("adaptador host-only: %s", c.HostOnlyIF)
-	log.Printf("IP temporal de la plantilla: %s, servidor DNS: %s", c.TemplateIP, c.DNSServer)
-	log.Printf("SSH: %s con llave %s", c.SSHUser, c.SSHKey)
-	log.Printf("cliente SSH: %s", c.SSHPath)
-	log.Printf("VM del servidor DNS: %s", c.NSVMName)
-
-	log.Printf("llaves de host SSH: %s", c.KnownHosts)
+	slog.Info("configuración cargada",
+		"componente", "app",
+		"vboxmanage", c.VBoxManage,
+		"disco_plantilla", c.TemplateDisk,
+		"adaptador", c.HostOnlyIF,
+		"ip_temporal", c.TemplateIP.String(),
+		"servidor_dns", c.DNSServer.String(),
+		"vm_dns", c.NSVMName,
+		"usuario_ssh", c.SSHUser,
+		"llave_ssh", c.SSHKey,
+		"cliente_ssh", c.SSHPath,
+		"known_hosts", c.KnownHosts,
+	)
 
 	if c.AuthUser != "" && c.AuthPassword != "" {
-		log.Printf("autenticación básica activa para el usuario %q", c.AuthUser)
+		slog.Info("autenticación básica activa", "componente", "app", "usuario", c.AuthUser)
 	} else {
-		log.Printf("ADVERTENCIA: la interfaz no pide usuario ni contraseña; defina HTTPAAS_AUTH_USER y HTTPAAS_AUTH_PASSWORD para activarla")
+		slog.Warn("la interfaz no pide usuario ni contraseña; defina HTTPAAS_AUTH_USER y HTTPAAS_AUTH_PASSWORD para activarla",
+			"componente", "app")
 	}
 
 	for name, path := range map[string]string{
@@ -101,7 +111,8 @@ func (c config) logSummary() {
 		"cliente SSH":     c.SSHPath,
 	} {
 		if _, err := os.Stat(path); err != nil {
-			log.Printf("ADVERTENCIA: no se encontró %s en %s; el aprovisionamiento fallará", name, path)
+			slog.Warn("no se encontró un archivo necesario; el aprovisionamiento fallará",
+				"componente", "app", "archivo", name, "ruta", path)
 		}
 	}
 }

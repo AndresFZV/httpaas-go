@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -73,7 +73,8 @@ func (m *Manager) CreateVM(ctx context.Context, name string) error {
 			if i > 0 {
 				// Se usa un contexto sin cancelación para limpiar aunque la petición original expire.
 				if cleanupErr := m.DeleteVM(context.WithoutCancel(ctx), name); cleanupErr != nil {
-					log.Printf("limpiar VM %s después del error: %v", name, cleanupErr)
+					slog.Error("no se pudo limpiar la VM después del error", "componente", "virtualbox",
+						"vm", name, "error", cleanupErr)
 				}
 			}
 			return fmt.Errorf("crear VM %s: %w", name, err)

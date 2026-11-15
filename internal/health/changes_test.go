@@ -42,10 +42,10 @@ func TestDescribeChangesReportsFailures(t *testing.T) {
 	curr.Instances = map[string]InstanceStatus{"paisajes": InstanceUnreachable}
 
 	want := []string{
-		"[estado] Servidor DNS · Bind9: falla (No responde consultas)",
-		"[estado] infraestructura con fallas",
-		"[estado] VM paisajes: apagada",
-		"[estado] instancia paisajes: Apache no responde",
+		"Servidor DNS · Bind9: falla (No responde consultas)",
+		"infraestructura con fallas",
+		"VM paisajes: apagada",
+		"instancia paisajes: Apache no responde",
 	}
 	if got := describeChanges(prev, curr); !slices.Equal(got, want) {
 		t.Errorf("cambios =\n%v\nse esperaba\n%v", got, want)
@@ -60,9 +60,9 @@ func TestDescribeChangesReportsRecovery(t *testing.T) {
 	got := describeChanges(prev, baseSnapshot())
 
 	for _, want := range []string{
-		"[estado] Servidor DNS · Bind9: recuperado (Resuelve ns.cloud.local)",
-		"[estado] infraestructura operativa",
-		"[estado] instancia paisajes: Apache responde",
+		"Servidor DNS · Bind9: recuperado (Resuelve ns.cloud.local)",
+		"infraestructura operativa",
+		"instancia paisajes: Apache responde",
 	} {
 		if !slices.Contains(got, want) {
 			t.Errorf("falta %q en %v", want, got)

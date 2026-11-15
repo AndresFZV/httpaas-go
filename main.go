@@ -2,9 +2,10 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -43,8 +44,15 @@ const (
 func main() {
 	cfg, err := loadConfig()
 	if err != nil {
-		log.Fatalf("configuración inválida: %v", err)
+		fatal("configuración inválida", err)
 	}
+
+	// Desde aquí, todo lo que se escriba con slog (y con el paquete log) sale en el formato elegido.
+	logger, err := newLogger(os.Stderr, cfg.LogFormat, cfg.LogLevel)
+	if err != nil {
+		fatal("configuración inválida", err)
+	}
+	slog.SetDefault(logger)
 	cfg.logSummary()
 
 	firstIP := netip.MustParseAddr(firstInstanceIP)
@@ -52,7 +60,7 @@ func main() {
 
 	store, err := instance.NewStore(cfg.DataFile, firstIP, lastIP)
 	if err != nil {
-		log.Fatalf("no se pudo cargar el registro de instancias: %v", err)
+		fatal("no se pudo cargar el registro de instancias", err)
 	}
 
 	vms := vbox.NewManager(vbox.Config{
@@ -65,7 +73,7 @@ func main() {
 
 	knownHosts, err := remote.NewKnownHosts(cfg.KnownHosts)
 	if err != nil {
-		log.Fatalf("no se pudo preparar el archivo de llaves de host: %v", err)
+		fatal("no se pudo preparar el archivo de llaves de host", err)
 	}
 	warnIfHostKeyMissing(knownHosts, cfg.DNSServer.String(), cfg.KnownHosts)
 
@@ -92,7 +100,7 @@ func main() {
 	uploadsDir := filepath.Join(filepath.Dir(cfg.DataFile), "uploads")
 	deployments, err := deployment.NewManager(uploadsDir, provisioner, deployer, deployment.NewHTTPVerifier())
 	if err != nil {
-		log.Fatalf("no se pudo preparar los despliegues: %v", err)
+		fatal("no se pudo preparar los despliegues", err)
 	}
 
 	powerCtl := power.NewController(vms)
@@ -135,7 +143,7 @@ func main() {
 		Power:       powerCtl,
 	})
 	if err != nil {
-		log.Fatalf("no se pudo inicializar la aplicación: %v", err)
+		fatal("no se pudo inicializar la aplicación", err)
 	}
 
 	mux := http.NewServeMux()
@@ -151,12 +159,19 @@ func main() {
 		ReadTimeout:       readTimeout,
 		WriteTimeout:      writeTimeout,
 		IdleTimeout:       idleTimeout,
+		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
 	}
 
-	log.Printf("servidor escuchando en http://localhost%s", cfg.Addr)
+	slog.Info("servidor escuchando", "componente", "app", "url", "http://localhost"+cfg.Addr)
 	if err := server.ListenAndServe(); err != nil {
-		log.Fatalf("el servidor se detuvo: %v", err)
+		fatal("el servidor se detuvo", err)
 	}
+}
+
+// fatal registra un error que impide seguir y termina la aplicación.
+func fatal(msg string, err error) {
+	slog.Error(msg, "componente", "app", "error", err)
+	os.Exit(1)
 }
 
 // warnIfHostKeyMissing avisa al arrancar si la llave de host de ns no está registrada,
@@ -165,11 +180,12 @@ func main() {
 func warnIfHostKeyMissing(knownHosts *remote.KnownHosts, host, file string) {
 	ok, err := knownHosts.Contains(host)
 	if err != nil {
-		log.Printf("ADVERTENCIA: %v", err)
+		slog.Warn("no se pudo revisar el archivo de llaves de host", "componente", "app", "error", err)
 		return
 	}
 	if !ok {
-		log.Printf("ADVERTENCIA: la llave de host de %s no está en %s; la app no se conectará a ns. "+
-			"Regístrela con: ssh-keyscan %s >> %s", host, knownHosts.Path(), host, filepath.ToSlash(file))
+		slog.Warn("la llave de host de ns no está registrada; la app no se conectará a ns",
+			"componente", "app", "host", host, "known_hosts", knownHosts.Path(),
+			"comando", "ssh-keyscan "+host+" >> "+filepath.ToSlash(file))
 	}
 }

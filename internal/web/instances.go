@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -80,18 +80,18 @@ func (h *Handler) deploy(w http.ResponseWriter, r *http.Request) {
 		archive = file
 		archiveName = header.Filename
 	case !errors.Is(err, http.ErrMissingFile):
-		log.Printf("leer archivo del formulario: %v", err)
+		slog.Error("no se pudo leer el archivo del formulario", "componente", "web", "error", err)
 		h.renderDeployError(w, r, hostname, errInvalidForm)
 		return
 	}
 
 	id, err := h.deployments.Start(hostname, archive, archiveName)
 	if err != nil {
-		log.Printf("iniciar despliegue de %s: %v", hostname, err)
+		slog.Error("no se pudo iniciar el despliegue", "componente", "web", "hostname", hostname, "error", err)
 		h.renderDeployError(w, r, hostname, errStartFailed)
 		return
 	}
-	log.Printf("despliegue %s iniciado para %s", id, hostname)
+	slog.Info("solicitud de despliegue", "componente", "web", "despliegue_id", id, "hostname", hostname)
 
 	redirectTo(w, r, "/deployments/"+url.PathEscape(id))
 }
@@ -116,7 +116,7 @@ func (h *Handler) publishInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		log.Printf("leer archivo del formulario: %v", err)
+		slog.Error("no se pudo leer el archivo del formulario", "componente", "web", "error", err)
 		h.renderInstancesError(w, r, errInvalidForm)
 		return
 	}
@@ -130,13 +130,13 @@ func (h *Handler) publishInstance(w http.ResponseWriter, r *http.Request) {
 	id, err := h.deployments.Publish(hostname, inst.IP, file, header.Filename)
 	if err != nil {
 		if !errors.Is(err, deployment.ErrBusy) {
-			log.Printf("iniciar publicación en %s: %v", hostname, err)
+			slog.Error("no se pudo iniciar la publicación", "componente", "web", "hostname", hostname, "error", err)
 			err = errStartFailed
 		}
 		h.renderInstancesError(w, r, err)
 		return
 	}
-	log.Printf("publicación %s iniciada en %s", id, hostname)
+	slog.Info("solicitud de publicación", "componente", "web", "despliegue_id", id, "hostname", hostname)
 
 	redirectTo(w, r, "/deployments/"+url.PathEscape(id))
 }
@@ -162,7 +162,6 @@ func (h *Handler) deleteInstance(w http.ResponseWriter, r *http.Request) {
 		h.renderInstancesError(w, r, infrastructureError(err, errDeleteFailed, "eliminar "+hostname))
 		return
 	}
-	log.Printf("instancia eliminada: %s", hostname)
 
 	redirectTo(w, r, "/instances?deleted="+url.QueryEscape(hostname))
 }
@@ -174,7 +173,7 @@ func validateUpload(file multipart.File, header *multipart.FileHeader) error {
 	}
 	// La validación leyó el archivo; se vuelve al inicio antes de guardarlo.
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		log.Printf("reiniciar lectura del archivo: %v", err)
+		slog.Error("no se pudo reiniciar la lectura del archivo", "componente", "web", "error", err)
 		return errInvalidForm
 	}
 	return nil
@@ -185,7 +184,7 @@ func (h *Handler) renderInstancesError(w http.ResponseWriter, r *http.Request, e
 	status, known := statusFor(err)
 	message := err.Error()
 	if !known {
-		log.Printf("error inesperado: %v", err)
+		slog.Error("error inesperado", "componente", "web", "error", err)
 		message = "Ocurrió un error interno; revise el log del servidor"
 	}
 
@@ -200,7 +199,7 @@ func (h *Handler) renderDeployError(w http.ResponseWriter, r *http.Request, host
 	status, known := statusFor(err)
 	message := err.Error()
 	if !known {
-		log.Printf("error inesperado: %v", err)
+		slog.Error("error inesperado", "componente", "web", "error", err)
 		message = "Ocurrió un error interno; revise el log del servidor"
 	}
 
@@ -222,7 +221,7 @@ func infrastructureError(err, public error, action string) error {
 	if _, known := statusFor(err); known {
 		return err
 	}
-	log.Printf("%s: %v", action, err)
+	slog.Error("falló una operación sobre la infraestructura", "componente", "web", "operacion", action, "error", err)
 	return public
 }
 
@@ -264,7 +263,7 @@ func parseRequestForm(w http.ResponseWriter, r *http.Request) error {
 		if errors.As(err, &maxErr) {
 			return deploy.ErrArchiveTooLarge
 		}
-		log.Printf("procesar formulario: %v", err)
+		slog.Error("no se pudo procesar el formulario", "componente", "web", "error", err)
 		return errInvalidForm
 	}
 	return nil

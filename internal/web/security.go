@@ -3,7 +3,7 @@ package web
 import (
 	"crypto/sha256"
 	"crypto/subtle"
-	"log"
+	"log/slog"
 	"net/http"
 )
 
@@ -46,8 +46,9 @@ func Secure(next http.Handler, cfg SecurityConfig) http.Handler {
 
 // denyCrossOrigin responde a las peticiones que la protección CSRF rechaza y las registra.
 func denyCrossOrigin(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[seguridad] %s %s rechazada: petición desde otro origen (Origin=%q, Sec-Fetch-Site=%q)",
-		r.Method, r.URL.Path, r.Header.Get("Origin"), r.Header.Get("Sec-Fetch-Site"))
+	slog.Warn("petición rechazada", "componente", "seguridad", "motivo", "otro_origen",
+		"metodo", r.Method, "ruta", r.URL.Path,
+		"origen", r.Header.Get("Origin"), "sec_fetch_site", r.Header.Get("Sec-Fetch-Site"))
 	http.Error(w, "Petición rechazada: proviene de otro sitio.", http.StatusForbidden)
 }
 
@@ -81,8 +82,8 @@ func basicAuth(next http.Handler, user, password string) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			log.Printf("[seguridad] %s %s rechazada: credenciales incorrectas para el usuario %q",
-				r.Method, r.URL.Path, gotUser)
+			slog.Warn("petición rechazada", "componente", "seguridad", "motivo", "credenciales_incorrectas",
+				"metodo", r.Method, "ruta", r.URL.Path, "usuario", gotUser)
 		}
 
 		w.Header().Set("WWW-Authenticate", `Basic realm="HTTPaaS", charset="UTF-8"`)

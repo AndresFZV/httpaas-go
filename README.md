@@ -62,7 +62,7 @@ Si una etapa falla, se deshacen las anteriores (VM, registro DNS e IP). Las inst
 
 ## Requisitos
 
-- Windows 10/11 con **Go 1.22 o superior**.
+- Windows 10/11 con **Go 1.25 o superior** (la protección CSRF usa `http.CrossOriginProtection`, disponible desde Go 1.25).
 - **Oracle VirtualBox 7**.
 - Cliente **OpenSSH** de Windows (`C:\Windows\System32\OpenSSH\ssh.exe`, incluido en Windows).
 - **Git Bash** (recomendado para los comandos de este documento).
@@ -112,6 +112,20 @@ Resumen; el detalle está en la guía de importación del equipo.
    Add-DnsClientNrptRule -Namespace ".cloud.local" -NameServers "192.168.10.10"
    ```
 
+6. **Registrar la llave de host de `ns`** (Git Bash, desde la carpeta del proyecto y con `ns` encendida). La app exige esta llave para conectarse a `ns`; sin ella, falla el registro de nombres en el DNS:
+
+   ```bash
+   mkdir -p data
+   ssh-keyscan 192.168.10.10 >> data/known_hosts
+   ssh-keygen -lf data/known_hosts
+   ```
+
+   La huella que muestra `ssh-keygen` debe coincidir con la que se ve dentro de `ns`:
+
+   ```bash
+   ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+   ```
+
 ## Ejecución
 
 Desde **Git Bash abierto como administrador** (necesario para limpiar la caché ARP de Windows; ver *Limitaciones conocidas*):
@@ -119,8 +133,12 @@ Desde **Git Bash abierto como administrador** (necesario para limpiar la caché 
 ```bash
 cd httpaas-go
 export HTTPAAS_HOSTONLY_IF="VirtualBox Host-Only Ethernet Adapter #2"
+export HTTPAAS_AUTH_USER="admin"
+export HTTPAAS_AUTH_PASSWORD="una-contraseña-larga"
 go run .
 ```
+
+Las dos variables de autenticación son opcionales: si no se definen, la interfaz no pide usuario ni contraseña y el log lo advierte al arrancar.
 
 Abrir <http://localhost:8080>. El log de arranque muestra la configuración y advierte si falta VBoxManage, el disco o la llave.
 
@@ -154,6 +172,9 @@ Todos los valores tienen un predeterminado y se pueden cambiar con variables de 
 | `HTTPAAS_SSH_KEY` | `~/.ssh/httpaas` | Llave privada |
 | `HTTPAAS_TEMPLATE_IP` | `192.168.10.20` | IP con la que arranca toda VM clonada |
 | `HTTPAAS_DNS_SERVER` | `192.168.10.10` | IP de `ns` |
+| `HTTPAAS_KNOWN_HOSTS` | `data/known_hosts` | Llaves de host SSH de `ns` y de las instancias |
+| `HTTPAAS_AUTH_USER` | *(vacío)* | Usuario de la autenticación básica; vacío la desactiva |
+| `HTTPAAS_AUTH_PASSWORD` | *(vacío)* | Contraseña de la autenticación básica; vacía la desactiva |
 
 Valores fijos en el código: rango de IPs `192.168.10.30`–`192.168.10.254`, 512 MB y 1 CPU por VM, TTL de 300 s para los registros DNS, verificación de la infraestructura cada 5 s (cada 3 s durante transiciones o fallas).
 
@@ -165,7 +186,7 @@ Valores fijos en el código: rango de IPs `192.168.10.30`–`192.168.10.254`, 51
 ├── internal/
 │   ├── instance/          # registro de instancias en JSON y asignación de IPs
 │   ├── vbox/              # comandos de VBoxManage
-│   ├── remote/            # cliente SSH (comandos y envío de archivos)
+│   ├── remote/            # cliente SSH (comandos, envío de archivos y llaves de host)
 │   ├── dns/               # registros A en Bind9 con nsupdate
 │   ├── hostnet/           # limpieza de la caché ARP del anfitrión
 │   ├── provision/         # orquestación de la creación y eliminación de VMs
@@ -173,7 +194,7 @@ Valores fijos en el código: rango de IPs `192.168.10.30`–`192.168.10.254`, 51
 │   ├── deployment/        # despliegues en segundo plano, con estado y reintento
 │   ├── health/            # verificación periódica y registro de cambios de estado
 │   ├── power/             # encender, apagar y reiniciar VMs
-│   └── web/               # handlers HTTP y vistas
+│   └── web/               # handlers HTTP, vistas y protecciones de seguridad
 ├── templates/             # plantillas HTML (layout, partes y páginas)
 ├── static/                # CSS, JavaScript e íconos
 └── ejemplos/              # sitios de prueba (paisajes y negocios)
@@ -198,6 +219,15 @@ Solo usa la biblioteca estándar de Go: sin frameworks web ni dependencias exter
 | `GET` | `/api/deployments/{id}` | Estado de un despliegue en JSON |
 | `GET` | `/api/status` | Estado de las instancias, la infraestructura y `ns` en JSON |
 
+## Seguridad
+
+- **Protección CSRF**: los `POST` que llegan desde otro sitio se rechazan con 403 (`http.CrossOriginProtection`, que revisa las cabeceras `Sec-Fetch-Site` y `Origin`). Los clientes que no son navegadores, como `curl`, no envían esas cabeceras y no se ven afectados. Cada rechazo queda en el log con la etiqueta `[seguridad]`.
+- **Cabeceras de seguridad** en todas las respuestas: `Content-Security-Policy` (solo recursos del propio servidor y de Google Fonts), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` y `Referrer-Policy: same-origin`.
+- **Autenticación básica opcional** con `HTTPAAS_AUTH_USER` y `HTTPAAS_AUTH_PASSWORD`. La comparación se hace en tiempo constante.
+- **Verificación de llaves de host SSH**: la app usa su propio `known_hosts`. La llave de `ns` se registra a mano y se exige (`StrictHostKeyChecking=yes`). La de cada instancia se registra en la primera conexión y se verifica en las siguientes (`accept-new`). Cuando una IP pasa a otra VM (la IP temporal en cada creación, o la IP de una instancia eliminada), la app borra la llave anterior.
+- **Límites del `.zip`**: 50 MB comprimido, 200 MB descomprimido y 5000 archivos. El tamaño descomprimido se mide descomprimiendo el archivo, porque el que declara el `.zip` se puede falsificar.
+- **Tiempos máximos del servidor HTTP**: 10 s para las cabeceras, 2 min para leer la petición y escribir la respuesta, y 60 s para conexiones inactivas.
+
 ## Pruebas
 
 ```bash
@@ -219,7 +249,8 @@ Compress-Archive -Path ejemplos\negocios\* -DestinationPath negocios.zip -Force
 
 - **Caché ARP de Windows**: todas las VMs arrancan con la misma IP temporal (y las IPs se reutilizan al eliminar), cada una con una MAC distinta. Windows conserva la MAC anterior y la VM nueva queda inalcanzable; la app borra esa entrada con `arp -d`, que requiere ejecutarla como administrador.
 - **Una instancia a la vez**: por la IP temporal compartida, los aprovisionamientos se encolan.
-- **Llaves de host compartidas**: todas las instancias salen del mismo disco y comparten la llave de host SSH, por lo que la app no verifica las llaves de host.
+- **Llaves de host compartidas**: todas las instancias salen del mismo disco y comparten la llave de host SSH. La app verifica cada llave, pero no puede distinguir una instancia de otra hasta que la plantilla genere llaves nuevas en el primer arranque.
+- **Sin HTTPS**: la interfaz se sirve por HTTP en `localhost`; con autenticación activa, las credenciales viajan sin cifrar dentro del propio equipo.
 - **Estado de los despliegues en memoria**: si la app se reinicia durante un despliegue, se pierde su seguimiento (las instancias ya creadas siguen en el registro).
 - **Tiempos**: crear una instancia tarda unos 2-3 minutos, dominados por los dos arranques de Debian (antes y después de configurar la IP).
 - **Reinicio del anfitrión**: las VMs quedan apagadas; se encienden desde la interfaz (`ns` con *Encender ns* en el dashboard).

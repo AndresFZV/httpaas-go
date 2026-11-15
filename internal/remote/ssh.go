@@ -5,8 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -17,6 +18,15 @@ type Config struct {
 	User           string // usuario remoto, por ejemplo "deploy"
 	KeyFile        string // llave privada sin passphrase
 	ConnectTimeout time.Duration
+
+	// KnownHostsFile es el archivo donde ssh guarda y verifica las llaves de host.
+	// Para las VMs se usa StrictHostKeyChecking=accept-new: la primera conexión registra
+	// la llave y las siguientes fallan si cambia.
+	KnownHostsFile string
+
+	// StrictHosts son las máquinas cuya llave debe estar registrada de antemano (por ejemplo ns).
+	// Con ellas se usa StrictHostKeyChecking=yes: si la llave no está o no coincide, no se conecta.
+	StrictHosts []string
 }
 
 // runFunc ejecuta un programa con stdin y devuelve su salida combinada.
@@ -35,7 +45,7 @@ func NewClient(cfg Config) *Client {
 
 // Run ejecuta script con bash en host. El script se envía por stdin, así no hay que escaparlo.
 func (c *Client) Run(ctx context.Context, host, script string) error {
-	args := append(c.commonArgs(), c.target(host), "bash", "-s")
+	args := append(c.commonArgs(host), c.target(host), "bash", "-s")
 	out, err := c.run(ctx, c.cfg.SSHPath, strings.NewReader(script), args...)
 	if err != nil {
 		return fmt.Errorf("ssh %s: %w: %s", host, err, strings.TrimSpace(string(out)))
@@ -47,7 +57,7 @@ func (c *Client) Run(ctx context.Context, host, script string) error {
 // Se envía por stdin de ssh con cat en vez de usar scp, porque el scp de Git Bash
 // interpreta las rutas locales de Windows (C:\...) como si C fuera un host remoto.
 func (c *Client) Upload(ctx context.Context, host string, r io.Reader, remotePath string) error {
-	args := append(c.commonArgs(), c.target(host), "cat > "+shellQuote(remotePath))
+	args := append(c.commonArgs(host), c.target(host), "cat > "+shellQuote(remotePath))
 	out, err := c.run(ctx, c.cfg.SSHPath, r, args...)
 	if err != nil {
 		return fmt.Errorf("copiar a %s:%s: %w: %s", host, remotePath, err, strings.TrimSpace(string(out)))
@@ -71,15 +81,28 @@ func (c *Client) WaitForSSH(ctx context.Context, host string, interval time.Dura
 	}
 }
 
-func (c *Client) commonArgs() []string {
+func (c *Client) commonArgs(host string) []string {
+	checking := "accept-new"
+	if slices.Contains(c.cfg.StrictHosts, host) {
+		checking = "yes"
+	}
+
 	return []string{
 		"-i", c.cfg.KeyFile,
 		"-o", "BatchMode=yes",
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "UserKnownHostsFile=" + os.DevNull,
+		"-o", "StrictHostKeyChecking=" + checking,
+		"-o", "UserKnownHostsFile=" + quoteConfigValue(c.cfg.KnownHostsFile),
+		"-o", "HashKnownHosts=no",
 		"-o", "LogLevel=ERROR",
 		"-o", fmt.Sprintf("ConnectTimeout=%d", int(c.cfg.ConnectTimeout.Seconds())),
 	}
+}
+
+// quoteConfigValue prepara una ruta para una opción -o de ssh. ssh separa por espacios
+// el valor de UserKnownHostsFile, así que la ruta va entre comillas; se usan barras normales
+// porque la barra invertida dentro de las comillas se interpreta como escape.
+func quoteConfigValue(path string) string {
+	return `"` + filepath.ToSlash(path) + `"`
 }
 
 func (c *Client) target(host string) string {

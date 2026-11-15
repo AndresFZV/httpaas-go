@@ -27,6 +27,13 @@ const apacheWebRoot = "/var/www/html"
 // dnsKeyFile es la clave TSIG de Bind9 dentro del servidor ns.
 const dnsKeyFile = "/etc/bind/cloud-key.key"
 
+// Tiempos máximos de una conexión HTTP. La lectura admite subir un .zip de 50 MB por una red lenta.
+const (
+	readTimeout  = 2 * time.Minute
+	writeTimeout = 2 * time.Minute
+	idleTimeout  = 60 * time.Second
+)
+
 // Intervalos de verificación: normal, y mientras haya acciones o despliegues en curso.
 const (
 	healthInterval     = 5 * time.Second
@@ -56,11 +63,20 @@ func main() {
 		CPUs:           vmCPUs,
 	})
 
+	knownHosts, err := remote.NewKnownHosts(cfg.KnownHosts)
+	if err != nil {
+		log.Fatalf("no se pudo preparar el archivo de llaves de host: %v", err)
+	}
+	warnIfHostKeyMissing(knownHosts, cfg.DNSServer.String(), cfg.KnownHosts)
+
+	// La llave de ns se registra a mano y se exige; las de las instancias se registran al crearlas.
 	ssh := remote.NewClient(remote.Config{
 		SSHPath:        cfg.SSHPath,
 		User:           cfg.SSHUser,
 		KeyFile:        cfg.SSHKey,
 		ConnectTimeout: sshConnectTimeout,
+		KnownHostsFile: knownHosts.Path(),
+		StrictHosts:    []string{cfg.DNSServer.String()},
 	})
 
 	dnsUpdater := dns.NewUpdater(ssh, cfg.DNSServer.String(), instance.Domain, dnsKeyFile, dnsTTL)
@@ -69,7 +85,7 @@ func main() {
 		TemplateIP:   cfg.TemplateIP,
 		BootTimeout:  bootTimeout,
 		PollInterval: sshPollInterval,
-	}, store, vms, ssh, dnsUpdater, hostnet.NewARPCache())
+	}, store, vms, ssh, dnsUpdater, hostnet.NewARPCache(), knownHosts)
 
 	deployer := deploy.NewDeployer(ssh, apacheWebRoot)
 
@@ -126,13 +142,34 @@ func main() {
 	handler.RegisterRoutes(mux)
 
 	server := &http.Server{
-		Addr:              cfg.Addr,
-		Handler:           mux,
+		Addr: cfg.Addr,
+		Handler: web.Secure(mux, web.SecurityConfig{
+			AuthUser:     cfg.AuthUser,
+			AuthPassword: cfg.AuthPassword,
+		}),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
 	}
 
 	log.Printf("servidor escuchando en http://localhost%s", cfg.Addr)
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("el servidor se detuvo: %v", err)
+	}
+}
+
+// warnIfHostKeyMissing avisa al arrancar si la llave de host de ns no está registrada,
+// porque sin ella la app no se conecta a ns y fallan el registro y la eliminación de nombres.
+// file es la ruta tal como se configuró, para mostrar un comando que se pueda copiar en Git Bash.
+func warnIfHostKeyMissing(knownHosts *remote.KnownHosts, host, file string) {
+	ok, err := knownHosts.Contains(host)
+	if err != nil {
+		log.Printf("ADVERTENCIA: %v", err)
+		return
+	}
+	if !ok {
+		log.Printf("ADVERTENCIA: la llave de host de %s no está en %s; la app no se conectará a ns. "+
+			"Regístrela con: ssh-keyscan %s >> %s", host, knownHosts.Path(), host, filepath.ToSlash(file))
 	}
 }

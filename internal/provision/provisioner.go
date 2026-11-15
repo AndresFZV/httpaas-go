@@ -3,7 +3,7 @@ package provision
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/netip"
 	"sync"
 	"time"
@@ -12,6 +12,9 @@ import (
 )
 
 const cleanupTimeout = 2 * time.Minute
+
+// component identifica en el log los eventos de este paquete.
+const component = "aprovisionamiento"
 
 // Stage es una etapa del aprovisionamiento que se informa mientras avanza.
 type Stage int
@@ -121,15 +124,16 @@ func (p *Provisioner) Delete(ctx context.Context, hostname string) error {
 
 	// Un registro DNS sobrante no impide liberar la VM; solo se registra en el log.
 	if err := p.dns.DeleteRecord(ctx, hostname); err != nil {
-		log.Printf("eliminar instancia %s: %v", hostname, err)
+		slog.Warn("no se pudo quitar el registro DNS", "componente", component, "hostname", hostname, "error", err)
 	}
 	if err := p.vms.DeleteVM(ctx, hostname); err != nil {
 		return err
 	}
 	// La IP queda libre para otra VM, que tendrá otra llave de host.
 	if err := p.hostKeys.Forget(ctx, inst.IP); err != nil {
-		log.Printf("eliminar instancia %s: %v", hostname, err)
+		slog.Warn("no se pudo borrar la llave de host", "componente", component, "hostname", hostname, "error", err)
 	}
+	slog.Info("instancia eliminada", "componente", component, "hostname", hostname, "ip", inst.IP.String())
 	return p.store.Remove(hostname)
 }
 
@@ -167,10 +171,11 @@ func (p *Provisioner) createAndConfigure(ctx context.Context, inst instance.Inst
 // Desde ese momento, la llave de la VM nueva queda registrada y se verifica en cada conexión.
 func (p *Provisioner) waitForSSH(ctx context.Context, ip netip.Addr) error {
 	if err := p.neighbors.Forget(ctx, ip); err != nil {
-		log.Printf("ADVERTENCIA: %v (¿la app se ejecuta como administrador?)", err)
+		slog.Warn("no se pudo limpiar la caché ARP; ¿la app se ejecuta como administrador?",
+			"componente", component, "ip", ip.String(), "error", err)
 	}
 	if err := p.hostKeys.Forget(ctx, ip); err != nil {
-		log.Printf("ADVERTENCIA: %v", err)
+		slog.Warn("no se pudo borrar la llave de host", "componente", component, "ip", ip.String(), "error", err)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.BootTimeout)
@@ -184,15 +189,18 @@ func (p *Provisioner) rollback(inst instance.Instance, vmCreated bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 	defer cancel()
 
+	slog.Warn("rollback: se deshace el aprovisionamiento", "componente", component,
+		"hostname", inst.Hostname, "ip", inst.IP.String(), "vm_creada", vmCreated)
+
 	if vmCreated {
 		if err := p.dns.DeleteRecord(ctx, inst.Hostname); err != nil {
-			log.Printf("rollback de %s: %v", inst.Hostname, err)
+			slog.Error("rollback incompleto", "componente", component, "hostname", inst.Hostname, "error", err)
 		}
 		if err := p.vms.DeleteVM(ctx, inst.Hostname); err != nil {
-			log.Printf("rollback de %s: %v", inst.Hostname, err)
+			slog.Error("rollback incompleto", "componente", component, "hostname", inst.Hostname, "error", err)
 		}
 	}
 	if err := p.store.Remove(inst.Hostname); err != nil {
-		log.Printf("rollback de %s: %v", inst.Hostname, err)
+		slog.Error("rollback incompleto", "componente", component, "hostname", inst.Hostname, "error", err)
 	}
 }

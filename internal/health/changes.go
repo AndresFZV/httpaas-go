@@ -2,7 +2,7 @@ package health
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"maps"
 	"slices"
 	"strings"
@@ -12,7 +12,7 @@ import (
 // de caídas y recuperaciones aunque nadie esté mirando la interfaz.
 func logChanges(prev, curr Snapshot) {
 	for _, line := range describeChanges(prev, curr) {
-		log.Print(line)
+		slog.Info(line, "componente", "estado")
 	}
 }
 
@@ -35,17 +35,17 @@ func describeChanges(prev, curr Snapshot) []string {
 			continue
 		}
 		if c.OK {
-			lines = append(lines, fmt.Sprintf("[estado] %s: recuperado (%s)", c.Name, c.Detail))
+			lines = append(lines, fmt.Sprintf("%s: recuperado (%s)", c.Name, c.Detail))
 		} else {
-			lines = append(lines, fmt.Sprintf("[estado] %s: falla (%s)", c.Name, c.Detail))
+			lines = append(lines, fmt.Sprintf("%s: falla (%s)", c.Name, c.Detail))
 		}
 	}
 
 	if prev.Operational() != curr.Operational() {
 		if curr.Operational() {
-			lines = append(lines, "[estado] infraestructura operativa")
+			lines = append(lines, "infraestructura operativa")
 		} else {
-			lines = append(lines, "[estado] infraestructura con fallas")
+			lines = append(lines, "infraestructura con fallas")
 		}
 	}
 
@@ -58,7 +58,7 @@ func describeChanges(prev, curr Snapshot) []string {
 			if curr.VMs[name] {
 				state = "encendida"
 			}
-			lines = append(lines, fmt.Sprintf("[estado] VM %s: %s", name, state))
+			lines = append(lines, fmt.Sprintf("VM %s: %s", name, state))
 		}
 	}
 
@@ -69,9 +69,9 @@ func describeChanges(prev, curr Snapshot) []string {
 			continue
 		}
 		if now == InstanceActive {
-			lines = append(lines, fmt.Sprintf("[estado] instancia %s: Apache responde", name))
+			lines = append(lines, fmt.Sprintf("instancia %s: Apache responde", name))
 		} else {
-			lines = append(lines, fmt.Sprintf("[estado] instancia %s: Apache no responde", name))
+			lines = append(lines, fmt.Sprintf("instancia %s: Apache no responde", name))
 		}
 	}
 
@@ -97,7 +97,7 @@ func summary(s Snapshot) string {
 			active++
 		}
 	}
-	return fmt.Sprintf("[estado] primera verificación: infraestructura %s; %d de %d instancias responden",
+	return fmt.Sprintf("primera verificación: infraestructura %s; %d de %d instancias responden",
 		state, active, len(s.Instances))
 }
 

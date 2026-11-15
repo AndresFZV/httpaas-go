@@ -5,10 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 )
+
+// component identifica en el log los eventos de este paquete.
+const component = "energia"
 
 // Action es una acción sobre el encendido de una VM.
 type Action string
@@ -101,7 +104,7 @@ func (c *Controller) OnChange(fn func()) {
 // Apagar corre en segundo plano, porque espera a que el sistema operativo termine de apagarse.
 func (c *Controller) Do(ctx context.Context, name string, action Action) error {
 	if !c.reserve(name) {
-		log.Printf("[energía] %s: se rechazó %s porque hay otra acción en curso", name, action.Label())
+		slog.Warn("acción rechazada: hay otra acción en curso", "componente", component, "vm", name, "accion", action.Label())
 		return ErrInProgress
 	}
 
@@ -109,17 +112,17 @@ func (c *Controller) Do(ctx context.Context, name string, action Action) error {
 	case ActionStart, ActionRestart:
 		err := c.run(ctx, name, action)
 		if err != nil {
-			log.Printf("[energía] %s: no se pudo %s: %v", name, action.Label(), err)
+			slog.Error("la acción falló", "componente", component, "vm", name, "accion", action.Label(), "error", err)
 		} else if action == ActionStart {
-			log.Printf("[energía] %s: encendido enviado", name)
+			slog.Info("encendido enviado", "componente", component, "vm", name)
 		} else {
-			log.Printf("[energía] %s: reinicio enviado", name)
+			slog.Info("reinicio enviado", "componente", component, "vm", name)
 		}
 		c.finish(name, action, err == nil)
 		return err
 	case ActionStop:
 		c.remember(name, ActionStop)
-		log.Printf("[energía] %s: apagado ordenado solicitado", name)
+		slog.Info("apagado ordenado solicitado", "componente", component, "vm", name)
 		go c.stop(name)
 		return nil
 	default:
@@ -164,19 +167,21 @@ func (c *Controller) stop(name string) {
 
 	switch {
 	case err == nil && !running[name]:
-		log.Printf("[energía] %s: ya estaba apagada", name)
+		slog.Info("la VM ya estaba apagada", "componente", component, "vm", name)
 	default:
 		if err := c.vms.ShutdownVM(ctx, name); err != nil {
-			log.Printf("[energía] %s: error en el apagado ordenado: %v", name, err)
+			slog.Error("error en el apagado ordenado", "componente", component, "vm", name, "error", err)
 		}
 		if c.waitStopped(ctx, name) {
-			log.Printf("[energía] %s: apagada correctamente en %s", name, time.Since(started).Round(time.Second))
+			slog.Info("VM apagada correctamente", "componente", component, "vm", name,
+				"duracion_s", time.Since(started).Round(time.Second).Seconds())
 		} else {
-			log.Printf("[energía] %s: no respondió al apagado ordenado en %s; se fuerza el apagado", name, c.shutdownTimeout)
+			slog.Warn("la VM no respondió al apagado ordenado; se fuerza el apagado", "componente", component, "vm", name,
+				"espera_s", c.shutdownTimeout.Seconds())
 			if err := c.vms.PowerOffVM(ctx, name); err != nil {
-				log.Printf("[energía] %s: no se pudo forzar el apagado: %v", name, err)
+				slog.Error("no se pudo forzar el apagado", "componente", component, "vm", name, "error", err)
 			} else {
-				log.Printf("[energía] %s: apagado forzado completado", name)
+				slog.Info("apagado forzado completado", "componente", component, "vm", name)
 			}
 		}
 	}

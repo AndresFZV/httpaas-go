@@ -2,7 +2,7 @@ package web
 
 import (
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"time"
@@ -34,7 +34,7 @@ func (h *Handler) instancePower(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// La solicitud se registra antes de ejecutarla, para que el log siga el orden real de los hechos.
-	log.Printf("[web] solicitud: %s %s", action.Label(), hostname)
+	slog.Info("solicitud de energía", "componente", "web", "vm", hostname, "accion", action.Label())
 
 	ctx, cancel := backgroundContext(r, powerTimeout)
 	defer cancel()
@@ -59,7 +59,7 @@ func (h *Handler) nsPower(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// La solicitud se registra antes de ejecutarla, para que el log siga el orden real de los hechos.
-	log.Printf("[web] solicitud: %s %s", action.Label(), h.cfg.NSVMName)
+	slog.Info("solicitud de energía", "componente", "web", "vm", h.cfg.NSVMName, "accion", action.Label())
 
 	ctx, cancel := backgroundContext(r, powerTimeout)
 	defer cancel()
@@ -102,7 +102,7 @@ func (h *Handler) renderDashboardError(w http.ResponseWriter, r *http.Request, e
 	status, known := statusFor(err)
 	message := err.Error()
 	if !known {
-		log.Printf("error inesperado: %v", err)
+		slog.Error("error inesperado", "componente", "web", "error", err)
 		message = "Ocurrió un error interno; revise el log del servidor"
 	}
 

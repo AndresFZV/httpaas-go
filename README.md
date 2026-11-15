@@ -146,7 +146,7 @@ Para guardar el log en un archivo:
 
 ```bash
 go run . 2>&1 | tee app.log
-grep -a "\[estado\]" app.log
+grep -a "componente=estado" app.log
 ```
 
 Para compilar un ejecutable:
@@ -175,6 +175,8 @@ Todos los valores tienen un predeterminado y se pueden cambiar con variables de 
 | `HTTPAAS_KNOWN_HOSTS` | `data/known_hosts` | Llaves de host SSH de `ns` y de las instancias |
 | `HTTPAAS_AUTH_USER` | *(vacío)* | Usuario de la autenticación básica; vacío la desactiva |
 | `HTTPAAS_AUTH_PASSWORD` | *(vacío)* | Contraseña de la autenticación básica; vacía la desactiva |
+| `HTTPAAS_LOG_FORMAT` | `text` | Formato del log: `text` (clave=valor) o `json` |
+| `HTTPAAS_LOG_LEVEL` | `info` | Nivel mínimo del log: `debug`, `info`, `warn` o `error` |
 
 Valores fijos en el código: rango de IPs `192.168.10.30`–`192.168.10.254`, 512 MB y 1 CPU por VM, TTL de 300 s para los registros DNS, verificación de la infraestructura cada 5 s (cada 3 s durante transiciones o fallas).
 
@@ -194,9 +196,11 @@ Valores fijos en el código: rango de IPs `192.168.10.30`–`192.168.10.254`, 51
 │   ├── deployment/        # despliegues en segundo plano, con estado y reintento
 │   ├── health/            # verificación periódica y registro de cambios de estado
 │   ├── power/             # encender, apagar y reiniciar VMs
+│   ├── metrics/           # métricas en memoria en formato Prometheus
 │   └── web/               # handlers HTTP, vistas y protecciones de seguridad
 ├── templates/             # plantillas HTML (layout, partes y páginas)
 ├── static/                # CSS, JavaScript e íconos
+├── monitoring/            # Prometheus en Docker para consultar las métricas
 └── ejemplos/              # sitios de prueba (paisajes y negocios)
 ```
 
@@ -218,15 +222,84 @@ Solo usa la biblioteca estándar de Go: sin frameworks web ni dependencias exter
 | `POST` | `/infrastructure/ns/power/{start,restart}` | Enciende o reinicia `ns` |
 | `GET` | `/api/deployments/{id}` | Estado de un despliegue en JSON |
 | `GET` | `/api/status` | Estado de las instancias, la infraestructura y `ns` en JSON |
+| `GET` | `/healthz` | El proceso está vivo (sin autenticación) |
+| `GET` | `/readyz` | La app puede atender: verificación reciente y VirtualBox disponible; 503 si no (sin autenticación) |
+| `GET` | `/metrics` | Métricas en formato Prometheus |
 
 ## Seguridad
 
-- **Protección CSRF**: los `POST` que llegan desde otro sitio se rechazan con 403 (`http.CrossOriginProtection`, que revisa las cabeceras `Sec-Fetch-Site` y `Origin`). Los clientes que no son navegadores, como `curl`, no envían esas cabeceras y no se ven afectados. Cada rechazo queda en el log con la etiqueta `[seguridad]`.
+- **Protección CSRF**: los `POST` que llegan desde otro sitio se rechazan con 403 (`http.CrossOriginProtection`, que revisa las cabeceras `Sec-Fetch-Site` y `Origin`). Los clientes que no son navegadores, como `curl`, no envían esas cabeceras y no se ven afectados. Cada rechazo queda en el log con `componente=seguridad` y se cuenta en la métrica `httpaas_security_rejections_total`.
 - **Cabeceras de seguridad** en todas las respuestas: `Content-Security-Policy` (solo recursos del propio servidor y de Google Fonts), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` y `Referrer-Policy: same-origin`.
-- **Autenticación básica opcional** con `HTTPAAS_AUTH_USER` y `HTTPAAS_AUTH_PASSWORD`. La comparación se hace en tiempo constante.
+- **Autenticación básica opcional** con `HTTPAAS_AUTH_USER` y `HTTPAAS_AUTH_PASSWORD`. La comparación se hace en tiempo constante. `/healthz` y `/readyz` no la piden, porque los consultan orquestadores y balanceadores de carga; `/metrics` sí.
 - **Verificación de llaves de host SSH**: la app usa su propio `known_hosts`. La llave de `ns` se registra a mano y se exige (`StrictHostKeyChecking=yes`). La de cada instancia se registra en la primera conexión y se verifica en las siguientes (`accept-new`). Cuando una IP pasa a otra VM (la IP temporal en cada creación, o la IP de una instancia eliminada), la app borra la llave anterior.
 - **Límites del `.zip`**: 50 MB comprimido, 200 MB descomprimido y 5000 archivos. El tamaño descomprimido se mide descomprimiendo el archivo, porque el que declara el `.zip` se puede falsificar.
 - **Tiempos máximos del servidor HTTP**: 10 s para las cabeceras, 2 min para leer la petición y escribir la respuesta, y 60 s para conexiones inactivas.
+
+## Observabilidad
+
+### Log estructurado
+
+Cada evento es una línea con campos `clave=valor` (o JSON con `HTTPAAS_LOG_FORMAT=json`). El campo `componente` indica de dónde viene:
+
+| Componente | Eventos |
+|---|---|
+| `app` | Arranque, configuración y advertencias |
+| `http` | Cada petición: método, ruta, código, duración e identificador (`peticion_id`, también en la cabecera `X-Request-ID`) |
+| `web` | Solicitudes de la interfaz: despliegues, publicaciones, reintentos y acciones de energía |
+| `despliegue` | Inicio, cada etapa completada con su duración, y resultado. Todas las líneas llevan `despliegue_id` |
+| `aprovisionamiento` | Eliminación de instancias, rollback y advertencias de red |
+| `energia` | Encendido, apagado y reinicio de VMs |
+| `estado` | Cambios detectados por el monitor: caídas y recuperaciones |
+| `seguridad` | Peticiones rechazadas por CSRF o credenciales incorrectas |
+
+Las peticiones de sondeo (`/api/status`, archivos estáticos, `/healthz`, `/readyz` y `/metrics`) se registran en nivel `debug`. Ejemplos:
+
+```bash
+go run . 2>&1 | tee app.log
+grep -a "despliegue_id=3f9c1a" app.log    # todo un despliegue
+grep -a "componente=energia" app.log      # acciones de energía
+grep -a "level=ERROR" app.log             # solo errores
+```
+
+### Salud
+
+- `GET /healthz` responde `ok` mientras el proceso esté vivo (*liveness*).
+- `GET /readyz` responde 200 si la última verificación tiene menos de 30 s y VirtualBox responde, o 503 con el motivo (*readiness*). Que `ns` esté caída no la marca como no lista, porque la app puede encenderla.
+
+### Métricas
+
+`GET /metrics` publica, en el formato de texto de Prometheus:
+
+| Métrica | Tipo | Descripción |
+|---|---|---|
+| `httpaas_http_requests_total` | counter | Peticiones por método, ruta y código |
+| `httpaas_http_request_duration_seconds` | summary | Duración de las peticiones por método y ruta |
+| `httpaas_deployments_total` | counter | Despliegues por tipo (`creacion`, `publicacion`) y resultado (`exito`, `error`) |
+| `httpaas_deployment_duration_seconds` | summary | Duración de los despliegues |
+| `httpaas_deployment_step_duration_seconds` | summary | Duración de cada etapa completada |
+| `httpaas_security_rejections_total` | counter | Rechazos por motivo |
+| `httpaas_instances` | gauge | Instancias por estado |
+| `httpaas_component_up` | gauge | 1 si el componente respondió en la última verificación |
+| `httpaas_free_ips` | gauge | IPs libres del rango |
+| `httpaas_last_check_age_seconds` | gauge | Antigüedad de la última verificación |
+| `httpaas_uptime_seconds` | gauge | Tiempo desde el arranque |
+
+Para graficarlas con Prometheus (Docker Desktop):
+
+```bash
+mkdir -p monitoring/secrets
+printf '%s' "$HTTPAAS_AUTH_PASSWORD" > monitoring/secrets/httpaas-password
+docker compose -f monitoring/docker-compose.yml up -d
+```
+
+Abrir <http://localhost:9090>; en *Status → Target health* el objetivo `httpaas` debe estar `UP`. Consultas útiles:
+
+```promql
+httpaas_instances
+httpaas_component_up
+httpaas_deployment_step_duration_seconds_sum / httpaas_deployment_step_duration_seconds_count
+sum by (ruta) (rate(httpaas_http_requests_total[5m]))
+```
 
 ## Pruebas
 

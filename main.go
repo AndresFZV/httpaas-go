@@ -147,6 +147,15 @@ func main() {
 		TemplatesDir: "templates",
 		StaticDir:    "static",
 		OpenAPIFile:  filepath.Join("api", "openapi.yaml"),
+		Access: web.AccessConfig{
+			SSHUser:        cfg.SSHUser,
+			SSHKey:         cfg.SSHKey,
+			KnownHostsFile: knownHosts.Path(),
+			TemplateDisk:   cfg.TemplateDisk,
+			MemoryMB:       vmMemoryMB,
+			CPUs:           vmCPUs,
+			Home:           userHome(),
+		},
 	}, web.Deps{
 		Store:       store,
 		Provisioner: provisioner,
@@ -207,4 +216,13 @@ func warnIfHostKeyMissing(knownHosts *remote.KnownHosts, host, file string) {
 			"componente", "app", "host", host, "known_hosts", knownHosts.Path(),
 			"comando", "ssh-keyscan "+host+" >> "+filepath.ToSlash(file))
 	}
+}
+
+// userHome devuelve la carpeta del usuario, o "" si no se puede obtener.
+func userHome() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return home
 }

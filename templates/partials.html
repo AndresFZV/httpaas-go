@@ -8,20 +8,22 @@
                 <th>Dirección IP</th>
                 <th>Estado</th>
                 <th class="col-date">Fecha de creación</th>
-                <th><span class="sr-only">Acciones</span></th>
+                <th class="col-actions">Acciones</th>
             </tr>
         </thead>
         <tbody>
             {{range .}}
-            <tr data-instance="{{.Hostname}}" data-status="{{.Status}}">
+            <tr data-instance="{{.Hostname}}" data-status="{{.Status}}"
+                data-name="{{displayName .Hostname}}" data-fqdn="{{.FQDN}}" data-url="{{.URL}}"
+                data-ip="{{.IP}}" data-cidr="{{.CIDR}}" data-status-label="{{.StatusLabel}}" data-created="{{formatDate .CreatedAt}}">
                 <td>
-                    <div class="instance-name">
+                    <button type="button" class="instance-name instance-open" data-detail title="Ver detalle">
                         <span>{{icon "server" 18}}</span>
                         <div>
                             <strong>{{displayName .Hostname}}</strong>
                             <small>Servidor Apache</small>
                         </div>
-                    </div>
+                    </button>
                 </td>
                 <td><a href="{{.URL}}" target="_blank" rel="noopener">{{.FQDN}}</a></td>
                 <td><code>{{.IP}}</code></td>
@@ -29,6 +31,7 @@
                 <td class="muted-cell col-date">{{formatDate .CreatedAt}}</td>
                 <td>
                     <div class="row-actions">
+                        <button type="button" class="icon-button" data-detail title="Ver detalle">{{icon "info" 17}}</button>
                         <a class="icon-button" href="{{.URL}}" target="_blank" rel="noopener" title="Abrir aplicación">{{icon "external" 17}}</a>
                         {{if .CanStart}}
                         <form class="inline-form" method="post" action="/instances/{{.Hostname}}/power/start" data-power-form>
@@ -63,7 +66,9 @@
 
 <div class="mobile-cards">
     {{range .}}
-    <article class="mobile-instance" data-instance="{{.Hostname}}" data-status="{{.Status}}">
+    <article class="mobile-instance" data-instance="{{.Hostname}}" data-status="{{.Status}}"
+             data-name="{{displayName .Hostname}}" data-fqdn="{{.FQDN}}" data-url="{{.URL}}"
+             data-ip="{{.IP}}" data-cidr="{{.CIDR}}" data-status-label="{{.StatusLabel}}" data-created="{{formatDate .CreatedAt}}">
         <div class="mobile-instance-head">
             <div class="instance-name">
                 <span>{{icon "server" 18}}</span>
@@ -79,6 +84,7 @@
             <span>Creada <strong>{{formatDate .CreatedAt}}</strong></span>
         </div>
         <div class="mobile-instance-actions">
+            <button type="button" data-detail>{{icon "info" 16}} Detalle</button>
             <a href="{{.URL}}" target="_blank" rel="noopener">{{icon "external" 16}} Abrir</a>
             {{if .CanStart}}
             <form method="post" action="/instances/{{.Hostname}}/power/start" data-power-form>
@@ -149,5 +155,95 @@
             <button type="submit" class="primary-button">{{icon "upload" 16}} <span data-label>Publicar</span></button>
         </div>
     </form>
+</dialog>
+{{end}}
+
+{{define "detail-dialog"}}
+<dialog class="drawer" data-detail-dialog aria-labelledby="detail-title"
+        data-ssh-prefix="{{.Access.SSHPrefix}}" data-dns="{{.DNSServer}}">
+    <header class="drawer-head">
+        <div class="instance-name">
+            <span>{{icon "server" 20}}</span>
+            <div>
+                <strong id="detail-title" data-field="name"></strong>
+                <small data-field="fqdn"></small>
+            </div>
+        </div>
+        <button type="button" class="icon-button" data-dialog-cancel aria-label="Cerrar detalle">{{icon "x" 18}}</button>
+    </header>
+
+    <div class="drawer-body">
+        <section class="drawer-section">
+            <h3>Información general</h3>
+            <dl class="detail-grid">
+                <div><dt>Hostname</dt><dd data-field="hostname"></dd></div>
+                <div><dt>FQDN</dt><dd data-field="fqdn"></dd></div>
+                <div><dt>Dirección IP</dt><dd data-field="cidr"></dd></div>
+                <div><dt>Estado</dt><dd><span class="status-badge" data-detail-status><i></i><span data-field="statusLabel"></span></span></dd></div>
+                <div><dt>Enlace</dt><dd><a data-detail-link target="_blank" rel="noopener"></a></dd></div>
+                <div><dt>Creada</dt><dd data-field="created"></dd></div>
+            </dl>
+        </section>
+
+        <section class="drawer-section">
+            <h3>Máquina virtual</h3>
+            <dl class="detail-grid">
+                <div><dt>Nombre en VirtualBox</dt><dd data-field="hostname"></dd></div>
+                <div><dt>Recursos</dt><dd>{{.Access.CPUs}} CPU · {{.Access.MemoryMB}} MB de RAM</dd></div>
+                <div><dt>Disco</dt><dd>Diferencial de {{.Access.TemplateDisk}}</dd></div>
+                <div><dt>Red</dt><dd>NAT y solo anfitrión</dd></div>
+                <div><dt>Servidor DNS</dt><dd>{{.DNSServer}}</dd></div>
+                <div><dt>Usuario SSH</dt><dd>{{.Access.SSHUser}}</dd></div>
+            </dl>
+        </section>
+
+        {{if .Access.SSHPrefix}}
+        <section class="drawer-section">
+            <h3>Acceso SSH</h3>
+            <p class="drawer-note">Copia el comando y pégalo en Git Bash, en el equipo anfitrión. Usa la llave de la aplicación y su archivo <code>known_hosts</code>, donde ya está registrada la llave de esta instancia.</p>
+            <div class="command-box">
+                <code data-command="ssh"></code>
+                <button type="button" class="command-copy" data-copy data-copy-label="Comando copiado al portapapeles" data-command-copy="ssh" aria-label="Copiar comando SSH">{{icon "copy" 15}}</button>
+            </div>
+            <p class="drawer-warning" data-detail-off hidden>{{icon "alert" 14}} La instancia no está activa; enciéndela antes de conectarte.</p>
+        </section>
+        {{end}}
+
+        <section class="drawer-section">
+            <h3>Comandos útiles</h3>
+            <ul class="command-list">
+                {{if .Access.SSHPrefix}}
+                <li>
+                    <span>Estado de Apache</span>
+                    <div class="command-box">
+                        <code data-command="apache"></code>
+                        <button type="button" class="command-copy" data-copy data-copy-label="Comando copiado al portapapeles" data-command-copy="apache" aria-label="Copiar comando">{{icon "copy" 15}}</button>
+                    </div>
+                </li>
+                <li>
+                    <span>Archivos publicados</span>
+                    <div class="command-box">
+                        <code data-command="files"></code>
+                        <button type="button" class="command-copy" data-copy data-copy-label="Comando copiado al portapapeles" data-command-copy="files" aria-label="Copiar comando">{{icon "copy" 15}}</button>
+                    </div>
+                </li>
+                {{end}}
+                <li>
+                    <span>Registro en el DNS</span>
+                    <div class="command-box">
+                        <code data-command="dns"></code>
+                        <button type="button" class="command-copy" data-copy data-copy-label="Comando copiado al portapapeles" data-command-copy="dns" aria-label="Copiar comando">{{icon "copy" 15}}</button>
+                    </div>
+                </li>
+                <li>
+                    <span>Respuesta HTTP</span>
+                    <div class="command-box">
+                        <code data-command="http"></code>
+                        <button type="button" class="command-copy" data-copy data-copy-label="Comando copiado al portapapeles" data-command-copy="http" aria-label="Copiar comando">{{icon "copy" 15}}</button>
+                    </div>
+                </li>
+            </ul>
+        </section>
+    </div>
 </dialog>
 {{end}}

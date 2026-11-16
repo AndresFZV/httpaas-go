@@ -73,11 +73,71 @@
     const value = button.dataset.copy;
     try {
       await navigator.clipboard.writeText(value);
-      showToast("URL copiada al portapapeles");
+      showToast(button.dataset.copyLabel || "URL copiada al portapapeles");
     } catch {
       showToast(value);
     }
   });
+
+  // Panel lateral con el detalle de una instancia. Los datos salen de los atributos de su fila,
+  // así que siempre muestra el estado de la última actualización de la tabla.
+  const detailDialog = document.querySelector("[data-detail-dialog]");
+  if (detailDialog) {
+    const sshPrefix = detailDialog.dataset.sshPrefix;
+    const dnsServer = detailDialog.dataset.dns;
+
+    function commandsFor(item) {
+      const ssh = sshPrefix + item.ip;
+      return {
+        ssh,
+        apache: `${ssh} 'systemctl status apache2 --no-pager'`,
+        files: `${ssh} 'ls -la /var/www/html'`,
+        dns: `nslookup ${item.fqdn} ${dnsServer}`,
+        http: `curl -I ${item.url}`,
+      };
+    }
+
+    function openDetail(row) {
+      const item = { ...row.dataset, hostname: row.dataset.instance };
+
+      detailDialog.querySelectorAll("[data-field]").forEach((field) => {
+        field.textContent = item[field.dataset.field] ?? "";
+      });
+
+      const link = detailDialog.querySelector("[data-detail-link]");
+      link.href = item.url;
+      link.textContent = item.url;
+
+      detailDialog.querySelector("[data-detail-status]").className = "status-badge " + item.status;
+      const off = detailDialog.querySelector("[data-detail-off]");
+      if (off) off.hidden = item.status === "active";
+
+      const commands = commandsFor(item);
+      detailDialog.querySelectorAll("[data-command]").forEach((code) => {
+        code.textContent = commands[code.dataset.command];
+      });
+      detailDialog.querySelectorAll("[data-command-copy]").forEach((button) => {
+        button.dataset.copy = commands[button.dataset.commandCopy];
+      });
+
+      detailDialog.showModal();
+      detailDialog.querySelector("[data-dialog-cancel]").focus();
+    }
+
+    document.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-detail]");
+      if (!button) return;
+      const row = button.closest("[data-instance]");
+      if (row) openDetail(row);
+    });
+
+    detailDialog.querySelector("[data-dialog-cancel]").addEventListener("click", () => detailDialog.close());
+
+    // Un clic fuera del panel (en el fondo oscuro) lo cierra.
+    detailDialog.addEventListener("click", (event) => {
+      if (event.target === detailDialog) detailDialog.close();
+    });
+  }
 
   // Modal de confirmación para eliminar una instancia.
   const deleteDialog = document.querySelector("[data-delete-dialog]");

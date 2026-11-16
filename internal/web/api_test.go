@@ -299,23 +299,26 @@ func TestAPISpec(t *testing.T) {
 }
 
 func TestAPIAuthentication(t *testing.T) {
-	cfg := SecurityConfig{AuthUser: "admin", AuthPassword: "secreta", APIToken: "token-de-prueba"}
+	a, cookie := newSession(t)
+	cfg := SecurityConfig{Auth: a, APIToken: "token-de-prueba"}
 	h := Secure(okHandler, cfg)
 
 	tests := []struct {
 		name   string
 		path   string
 		header string
-		basic  bool
+		basic  bool // envía usuario y contraseña con autenticación básica
+		cookie bool // envía la cookie de la sesión del navegador
 		want   int
 	}{
-		{"API sin token", "/api/v1/instances", "", false, http.StatusUnauthorized},
-		{"API con token incorrecto", "/api/v1/instances", "Bearer otro", false, http.StatusUnauthorized},
-		{"API con token correcto", "/api/v1/instances", "Bearer token-de-prueba", false, http.StatusOK},
-		{"API no acepta usuario y contraseña", "/api/v1/instances", "", true, http.StatusUnauthorized},
-		{"especificación sin token", "/api/v1/openapi.yaml", "", false, http.StatusOK},
-		{"interfaz sigue pidiendo usuario y contraseña", "/instances", "Bearer token-de-prueba", false, http.StatusUnauthorized},
-		{"interfaz con usuario y contraseña", "/instances", "", true, http.StatusOK},
+		{"API sin token", "/api/v1/instances", "", false, false, http.StatusUnauthorized},
+		{"API con token incorrecto", "/api/v1/instances", "Bearer otro", false, false, http.StatusUnauthorized},
+		{"API con token correcto", "/api/v1/instances", "Bearer token-de-prueba", false, false, http.StatusOK},
+		{"API no acepta usuario y contraseña", "/api/v1/instances", "", true, false, http.StatusUnauthorized},
+		{"API no acepta la sesión del navegador", "/api/v1/instances", "", false, true, http.StatusUnauthorized},
+		{"especificación sin token", "/api/v1/openapi.yaml", "", false, false, http.StatusOK},
+		{"interfaz no acepta el token", "/instances", "Bearer token-de-prueba", false, false, http.StatusSeeOther},
+		{"interfaz con sesión", "/instances", "", false, true, http.StatusOK},
 	}
 
 	for _, tt := range tests {
@@ -326,6 +329,9 @@ func TestAPIAuthentication(t *testing.T) {
 			}
 			if tt.basic {
 				req.SetBasicAuth("admin", "secreta")
+			}
+			if tt.cookie {
+				req.AddCookie(cookie)
 			}
 			rec := serve(h, req)
 			if rec.Code != tt.want {

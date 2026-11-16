@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/AndresFZV/httpaas-go/internal/auth"
 	"github.com/AndresFZV/httpaas-go/internal/deploy"
 	"github.com/AndresFZV/httpaas-go/internal/deployment"
 	"github.com/AndresFZV/httpaas-go/internal/dns"
@@ -134,6 +135,9 @@ func main() {
 
 	monitor.Start(context.Background())
 
+	// Sin usuario o sin contraseña, authenticator es nil y la interfaz no pide inicio de sesión.
+	authenticator := auth.New(cfg.AuthUser, cfg.AuthPassword)
+
 	handler, err := web.NewHandler(web.Config{
 		Domain:       instance.Domain,
 		DNSServer:    cfg.DNSServer.String(),
@@ -150,6 +154,7 @@ func main() {
 		Monitor:     monitor,
 		Power:       powerCtl,
 		Metrics:     reg,
+		Auth:        authenticator,
 	})
 	if err != nil {
 		fatal("no se pudo inicializar la aplicación", err)
@@ -160,11 +165,10 @@ func main() {
 
 	// De afuera hacia adentro: registro y métricas de cada petición, protecciones de seguridad y rutas.
 	app := web.Instrument(web.Secure(mux, web.SecurityConfig{
-		AuthUser:     cfg.AuthUser,
-		AuthPassword: cfg.AuthPassword,
-		PublicPaths:  publicPaths,
-		APIToken:     cfg.APIToken,
-		Metrics:      reg,
+		Auth:        authenticator,
+		PublicPaths: publicPaths,
+		APIToken:    cfg.APIToken,
+		Metrics:     reg,
 	}), reg)
 
 	server := &http.Server{

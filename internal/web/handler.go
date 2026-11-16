@@ -14,6 +14,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/AndresFZV/httpaas-go/internal/auth"
 	"github.com/AndresFZV/httpaas-go/internal/deploy"
 	"github.com/AndresFZV/httpaas-go/internal/deployment"
 	"github.com/AndresFZV/httpaas-go/internal/health"
@@ -78,7 +79,8 @@ type Deps struct {
 	Deployments Deployments
 	Monitor     HealthMonitor
 	Power       PowerController
-	Metrics     *metrics.Registry // puede ser nil
+	Metrics     *metrics.Registry   // puede ser nil
+	Auth        *auth.Authenticator // nil si la interfaz no pide inicio de sesión
 }
 
 // Handler agrupa las dependencias de los handlers HTTP de la aplicación.
@@ -90,12 +92,18 @@ type Handler struct {
 	monitor     HealthMonitor
 	power       PowerController
 	metrics     *metrics.Registry
+	auth        *auth.Authenticator
 	pages       map[string]*template.Template
+	loginTmpl   *template.Template
 }
 
 // NewHandler carga las páginas de la interfaz y prepara los handlers.
 func NewHandler(cfg Config, deps Deps) (*Handler, error) {
 	pages, err := loadPages(cfg.TemplatesDir)
+	if err != nil {
+		return nil, err
+	}
+	loginTmpl, err := loadStandalone(cfg.TemplatesDir, "login.html")
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +116,9 @@ func NewHandler(cfg Config, deps Deps) (*Handler, error) {
 		monitor:     deps.Monitor,
 		power:       deps.Power,
 		metrics:     deps.Metrics,
+		auth:        deps.Auth,
 		pages:       pages,
+		loginTmpl:   loginTmpl,
 	}
 	h.registerGauges(deps.Metrics)
 	return h, nil
@@ -118,6 +128,10 @@ func NewHandler(cfg Config, deps Deps) (*Handler, error) {
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	fileServer := http.FileServer(http.Dir(h.cfg.StaticDir))
 	mux.Handle("GET /static/", http.StripPrefix("/static/", fileServer))
+
+	mux.HandleFunc("GET /login", h.loginPage)
+	mux.HandleFunc("POST /login", h.login)
+	mux.HandleFunc("POST /logout", h.logout)
 
 	mux.HandleFunc("GET /{$}", h.dashboard)
 	mux.HandleFunc("GET /instances", h.instances)
@@ -153,6 +167,7 @@ type stats struct {
 type pageData struct {
 	Page       string // nombre del archivo en templates/pages, también marca el menú activo
 	Breadcrumb string
+	User       string // usuario de la sesión; vacío si la interfaz no pide inicio de sesión
 
 	Domain    string
 	DNSServer string
@@ -212,6 +227,7 @@ func (h *Handler) newPage(r *http.Request, page, breadcrumb string) pageData {
 	return pageData{
 		Page:       page,
 		Breadcrumb: breadcrumb,
+		User:       h.currentUser(r),
 		Domain:     h.cfg.Domain,
 		DNSServer:  h.cfg.DNSServer,
 		Instances:  views,

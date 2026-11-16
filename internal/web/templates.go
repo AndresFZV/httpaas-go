@@ -23,6 +23,7 @@ var templateFuncs = template.FuncMap{
 	"formatDate":  formatDate,
 	"inc":         func(i int) int { return i + 1 },
 	"ago":         ago,
+	"initial":     initial,
 }
 
 // loadPages crea un conjunto de plantillas por página: layout + partials + la página.
@@ -55,6 +56,16 @@ func loadPages(dir string) (map[string]*template.Template, error) {
 	return pages, nil
 }
 
+// loadStandalone carga una página que no usa el layout de la aplicación, como el inicio de sesión.
+func loadStandalone(dir, file string) (*template.Template, error) {
+	name := strings.TrimSuffix(file, ".html")
+	tmpl, err := template.New(name).Funcs(templateFuncs).ParseFiles(filepath.Join(dir, file))
+	if err != nil {
+		return nil, fmt.Errorf("cargar página %s: %w", name, err)
+	}
+	return tmpl, nil
+}
+
 // icon dibuja un ícono de static/icons.svg con el tamaño indicado.
 func icon(name string, size int) template.HTML {
 	if !iconNamePattern.MatchString(name) {
@@ -73,6 +84,15 @@ func displayName(hostname string) string {
 		return hostname
 	}
 	return string(unicode.ToUpper(first)) + hostname[size:]
+}
+
+// initial devuelve la primera letra de name en mayúscula, para el avatar del usuario.
+func initial(name string) string {
+	first, _ := utf8.DecodeRuneInString(name)
+	if first == utf8.RuneError {
+		return "?"
+	}
+	return string(unicode.ToUpper(first))
 }
 
 // formatDate muestra una fecha en hora local con el mes abreviado en español: "11 nov 2026, 00:12".

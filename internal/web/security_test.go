@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AndresFZV/httpaas-go/internal/auth"
 	"github.com/AndresFZV/httpaas-go/internal/metrics"
 )
 
@@ -118,30 +119,91 @@ func TestSecureWithoutAuthDoesNotAskForCredentials(t *testing.T) {
 	}
 }
 
-func TestSecureBasicAuth(t *testing.T) {
-	h := Secure(okHandler, SecurityConfig{AuthUser: "admin", AuthPassword: "secreta"})
+// newSession inicia sesión con admin/secreta y devuelve el autenticador y la cookie de la sesión.
+func newSession(t *testing.T) (*auth.Authenticator, *http.Cookie) {
+	t.Helper()
+	a := auth.New("admin", "secreta")
+	s, _, err := a.Login("admin", "secreta", "192.0.2.1")
+	if err != nil {
+		t.Fatalf("Login() error: %v", err)
+	}
+	return a, &http.Cookie{Name: sessionCookie, Value: s.ID}
+}
+
+func TestSecureSessionRequired(t *testing.T) {
+	a, cookie := newSession(t)
+	h := Secure(okHandler, SecurityConfig{Auth: a, PublicPaths: []string{"/healthz"}})
 
 	tests := []struct {
-		name     string
-		user     string
-		password string
-		send     bool
-		want     int
+		name         string
+		method, path string
+		withCookie   bool
+		wantStatus   int
+		wantLocation string
 	}{
-		{"sin credenciales", "", "", false, http.StatusUnauthorized},
-		{"contraseña incorrecta", "admin", "otra", true, http.StatusUnauthorized},
-		{"usuario incorrecto", "root", "secreta", true, http.StatusUnauthorized},
-		{"credenciales correctas", "admin", "secreta", true, http.StatusOK},
+		{"página sin sesión va al login", http.MethodGet, "/instances?q=1", false, http.StatusSeeOther, "/login?next=%2Finstances%3Fq%3D1"},
+		{"dashboard sin sesión va al login sin next", http.MethodGet, "/", false, http.StatusSeeOther, "/login"},
+		{"POST sin sesión va al login", http.MethodPost, "/deploy", false, http.StatusSeeOther, "/login"},
+		{"consulta interna sin sesión responde 401", http.MethodGet, "/api/status", false, http.StatusUnauthorized, ""},
+		{"página con sesión", http.MethodGet, "/instances", true, http.StatusOK, ""},
+		{"consulta interna con sesión", http.MethodGet, "/api/status", true, http.StatusOK, ""},
+		{"formulario de login sin sesión", http.MethodGet, "/login", false, http.StatusOK, ""},
+		{"archivos estáticos sin sesión", http.MethodGet, "/static/style.css", false, http.StatusOK, ""},
+		{"ruta pública sin sesión", http.MethodGet, "/healthz", false, http.StatusOK, ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/", nil)
-			if tt.send {
-				req.SetBasicAuth(tt.user, tt.password)
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			if tt.withCookie {
+				req.AddCookie(cookie)
 			}
 			rec := serve(h, req)
+			if rec.Code != tt.wantStatus || rec.Header().Get("Location") != tt.wantLocation {
+				t.Errorf("estado = %d, Location = %q; se esperaba %d %q",
+					rec.Code, rec.Header().Get("Location"), tt.wantStatus, tt.wantLocation)
+			}
+		})
+	}
+}
 
+func TestSecureRejectsUnknownOrClosedSession(t *testing.T) {
+	a, cookie := newSession(t)
+	h := Secure(okHandler, SecurityConfig{Auth: a})
+
+	invented := httptest.NewRequest(http.MethodGet, "/instances", nil)
+	invented.AddCookie(&http.Cookie{Name: sessionCookie, Value: "inventada"})
+	if rec := serve(h, invented); rec.Code != http.StatusSeeOther {
+		t.Errorf("sesión inventada: estado = %d", rec.Code)
+	}
+
+	a.Logout(cookie.Value)
+	closed := httptest.NewRequest(http.MethodGet, "/instances", nil)
+	closed.AddCookie(cookie)
+	if rec := serve(h, closed); rec.Code != http.StatusSeeOther {
+		t.Errorf("sesión cerrada: estado = %d", rec.Code)
+	}
+}
+
+func TestSecureMetricsAcceptsBasicAuth(t *testing.T) {
+	a, cookie := newSession(t)
+	h := Secure(okHandler, SecurityConfig{Auth: a})
+
+	tests := []struct {
+		name  string
+		setup func(*http.Request)
+		want  int
+	}{
+		{"sin credenciales", func(*http.Request) {}, http.StatusUnauthorized},
+		{"contraseña incorrecta", func(r *http.Request) { r.SetBasicAuth("admin", "otra") }, http.StatusUnauthorized},
+		{"usuario y contraseña (Prometheus)", func(r *http.Request) { r.SetBasicAuth("admin", "secreta") }, http.StatusOK},
+		{"sesión del navegador", func(r *http.Request) { r.AddCookie(cookie) }, http.StatusOK},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+			tt.setup(req)
+			rec := serve(h, req)
 			if rec.Code != tt.want {
 				t.Errorf("estado = %d, se esperaba %d", rec.Code, tt.want)
 			}
@@ -152,51 +214,35 @@ func TestSecureBasicAuth(t *testing.T) {
 	}
 }
 
-func TestAuthEnabledRequiresUserAndPassword(t *testing.T) {
-	tests := []struct {
-		cfg  SecurityConfig
-		want bool
-	}{
-		{SecurityConfig{}, false},
-		{SecurityConfig{AuthUser: "admin"}, false},
-		{SecurityConfig{AuthPassword: "secreta"}, false},
-		{SecurityConfig{AuthUser: "admin", AuthPassword: "secreta"}, true},
-	}
-	for _, tt := range tests {
-		if got := tt.cfg.AuthEnabled(); got != tt.want {
-			t.Errorf("AuthEnabled(%+v) = %v, se esperaba %v", tt.cfg, got, tt.want)
-		}
-	}
-}
+func TestSecureUIDoesNotAcceptBasicAuth(t *testing.T) {
+	a, _ := newSession(t)
+	h := Secure(okHandler, SecurityConfig{Auth: a})
 
-func TestSecurePublicPathsSkipAuth(t *testing.T) {
-	h := Secure(okHandler, SecurityConfig{AuthUser: "admin", AuthPassword: "secreta", PublicPaths: []string{"/healthz"}})
-
-	if rec := serve(h, httptest.NewRequest(http.MethodGet, "/healthz", nil)); rec.Code != http.StatusOK {
-		t.Errorf("/healthz: estado = %d, se esperaba 200 sin credenciales", rec.Code)
-	}
-	if rec := serve(h, httptest.NewRequest(http.MethodGet, "/metrics", nil)); rec.Code != http.StatusUnauthorized {
-		t.Errorf("/metrics: estado = %d, se esperaba 401", rec.Code)
+	req := httptest.NewRequest(http.MethodGet, "/instances", nil)
+	req.SetBasicAuth("admin", "secreta")
+	if rec := serve(h, req); rec.Code != http.StatusSeeOther {
+		t.Errorf("estado = %d; la interfaz solo debe aceptar la sesión", rec.Code)
 	}
 }
 
 func TestSecureCountsRejections(t *testing.T) {
 	reg := metrics.New()
-	h := Secure(okHandler, SecurityConfig{AuthUser: "admin", AuthPassword: "secreta", Metrics: reg})
+	a, cookie := newSession(t)
+	h := Secure(okHandler, SecurityConfig{Auth: a, Metrics: reg})
 
-	serve(h, httptest.NewRequest(http.MethodGet, "/", nil))
+	serve(h, httptest.NewRequest(http.MethodGet, "/instances", nil))
 
-	bad := httptest.NewRequest(http.MethodGet, "/", nil)
+	bad := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	bad.SetBasicAuth("admin", "otra")
 	serve(h, bad)
 
 	cross := httptest.NewRequest(http.MethodPost, "/deploy", nil)
-	cross.SetBasicAuth("admin", "secreta")
+	cross.AddCookie(cookie)
 	cross.Header.Set("Sec-Fetch-Site", "cross-site")
 	serve(h, cross)
 
 	text := metricsText(t, reg)
-	for _, reason := range []string{reasonNoCredentials, reasonBadCredentials, reasonCrossOrigin} {
+	for _, reason := range []string{reasonNoSession, reasonBadCredentials, reasonCrossOrigin} {
 		want := `httpaas_security_rejections_total{motivo="` + reason + `"} 1`
 		if !strings.Contains(text, want) {
 			t.Errorf("falta %q en:\n%s", want, text)

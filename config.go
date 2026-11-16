@@ -100,9 +100,9 @@ func (c config) logSummary() {
 	)
 
 	if c.AuthUser != "" && c.AuthPassword != "" {
-		slog.Info("autenticación básica activa", "componente", "app", "usuario", c.AuthUser)
+		slog.Info("inicio de sesión activo", "componente", "app", "usuario", c.AuthUser)
 	} else {
-		slog.Warn("la interfaz no pide usuario ni contraseña; defina HTTPAAS_AUTH_USER y HTTPAAS_AUTH_PASSWORD para activarla",
+		slog.Warn("la interfaz no pide inicio de sesión; defina HTTPAAS_AUTH_USER y HTTPAAS_AUTH_PASSWORD para activarlo",
 			"componente", "app")
 	}
 

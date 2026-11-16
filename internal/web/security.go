@@ -5,9 +5,11 @@ import (
 	"crypto/subtle"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 
+	"github.com/AndresFZV/httpaas-go/internal/auth"
 	"github.com/AndresFZV/httpaas-go/internal/metrics"
 )
 
@@ -19,12 +21,27 @@ const (
 	reasonCrossOrigin    = "otro_origen"
 	reasonNoCredentials  = "sin_credenciales"
 	reasonBadCredentials = "credenciales_incorrectas"
+	reasonNoSession      = "sin_sesion"
+	reasonTooManyLogins  = "demasiados_intentos"
 	reasonNoToken        = "sin_token"
 	reasonBadToken       = "token_incorrecto"
 )
 
+// sessionCookie es la cookie que guarda el identificador de la sesión.
+const sessionCookie = "httpaas_sesion"
+
+// Rutas de inicio y cierre de sesión.
+const (
+	loginPath  = "/login"
+	logoutPath = "/logout"
+)
+
 // apiSpecPath es la especificación OpenAPI, que se publica sin token para poder leer la documentación.
 const apiSpecPath = apiPrefix + "openapi.yaml"
+
+// metricsPath acepta también usuario y contraseña con autenticación básica, porque Prometheus
+// no puede llenar el formulario de inicio de sesión.
+const metricsPath = "/metrics"
 
 // contentSecurityPolicy solo permite recursos del propio servidor, más las fuentes de Google Fonts.
 // Las plantillas no usan scripts ni estilos en línea, así que no hace falta 'unsafe-inline'.
@@ -39,9 +56,8 @@ const contentSecurityPolicy = "default-src 'self'; " +
 
 // SecurityConfig son las opciones de seguridad de la aplicación.
 type SecurityConfig struct {
-	// AuthUser y AuthPassword activan la autenticación básica. Si alguno está vacío, no se pide.
-	AuthUser     string
-	AuthPassword string
+	// Auth valida las credenciales y las sesiones. Si es nil, la interfaz no pide inicio de sesión.
+	Auth *auth.Authenticator
 
 	// PublicPaths son rutas que no piden autenticación, como las de salud que consultan
 	// los orquestadores y balanceadores de carga.
@@ -55,13 +71,8 @@ type SecurityConfig struct {
 	Metrics *metrics.Registry
 }
 
-// AuthEnabled indica si la aplicación pide usuario y contraseña.
-func (c SecurityConfig) AuthEnabled() bool {
-	return c.AuthUser != "" && c.AuthPassword != ""
-}
-
 // Secure envuelve next con las protecciones de la aplicación, de afuera hacia adentro:
-// cabeceras de seguridad, autenticación (token para /api/v1/ y básica para el resto, si está activa)
+// cabeceras de seguridad, token para /api/v1/, sesión para la interfaz (si está activa)
 // y protección CSRF. Las cabeceras van primero para que también acompañen las respuestas 401 y 403.
 func Secure(next http.Handler, cfg SecurityConfig) http.Handler {
 	cfg.Metrics.Counter(metricRejections, "Peticiones rechazadas por las protecciones de seguridad, por motivo.")
@@ -74,15 +85,78 @@ func Secure(next http.Handler, cfg SecurityConfig) http.Handler {
 	}))
 
 	handler := csrf.Handler(next)
-	if cfg.AuthEnabled() {
-		handler = basicAuth(handler, cfg)
+	if cfg.Auth != nil {
+		handler = sessionAuth(handler, cfg)
 	}
 	handler = apiTokenAuth(handler, cfg)
 	return securityHeaders(handler)
 }
 
-// apiTokenAuth exige el token de la API en las rutas /api/v1/; las demás pasan a la autenticación básica.
-// La comparación se hace en tiempo constante, igual que la de la autenticación básica.
+// sessionAuth exige una sesión iniciada en la interfaz. Sin sesión, las páginas redirigen
+// al formulario de inicio de sesión y las consultas internas (/api/...) responden 401.
+// No se aplica a la API versionada (usa token), a las rutas públicas, a los archivos estáticos
+// ni al propio formulario.
+func sessionAuth(next http.Handler, cfg SecurityConfig) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		if path == loginPath || strings.HasPrefix(path, "/static/") || strings.HasPrefix(path, apiPrefix) ||
+			slices.Contains(cfg.PublicPaths, path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if cookie, err := r.Cookie(sessionCookie); err == nil {
+			// No se pasa el usuario en el contexto: crear una petición nueva haría que el middleware
+			// de métricas no viera la ruta que asigna el ServeMux. Los handlers lo leen de la cookie.
+			if _, ok := cfg.Auth.Session(cookie.Value); ok {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		if path == metricsPath {
+			metricsBasicAuth(w, r, next, cfg)
+			return
+		}
+
+		// Llegar sin sesión es parte normal del flujo (la primera visita o una sesión vencida):
+		// se cuenta pero no se registra en el log.
+		cfg.Metrics.Inc(metricRejections, metrics.L("motivo", reasonNoSession))
+
+		if strings.HasPrefix(path, "/api/") {
+			writeAPIJSON(w, http.StatusUnauthorized, apiErrorBody{Error: apiError{
+				Codigo:  "sesion_requerida",
+				Mensaje: "la sesión venció; inicie sesión de nuevo",
+			}})
+			return
+		}
+
+		target := loginPath
+		if r.Method == http.MethodGet && path != "/" && path != logoutPath {
+			target += "?next=" + url.QueryEscape(r.URL.RequestURI())
+		}
+		http.Redirect(w, r, target, http.StatusSeeOther)
+	})
+}
+
+// metricsBasicAuth deja pasar a /metrics con usuario y contraseña por autenticación básica (Prometheus).
+func metricsBasicAuth(w http.ResponseWriter, r *http.Request, next http.Handler, cfg SecurityConfig) {
+	user, password, ok := r.BasicAuth()
+	if ok && cfg.Auth.Check(user, password) {
+		next.ServeHTTP(w, r)
+		return
+	}
+	if ok {
+		reject(cfg.Metrics, r, reasonBadCredentials, "usuario", user)
+	} else {
+		cfg.Metrics.Inc(metricRejections, metrics.L("motivo", reasonNoCredentials))
+	}
+	w.Header().Set("WWW-Authenticate", `Basic realm="HTTPaaS métricas", charset="UTF-8"`)
+	http.Error(w, "Se requiere usuario y contraseña.", http.StatusUnauthorized)
+}
+
+// apiTokenAuth exige el token de la API en las rutas /api/v1/; las demás pasan a la sesión.
+// La comparación se hace en tiempo constante, igual que la de las credenciales.
 func apiTokenAuth(next http.Handler, cfg SecurityConfig) http.Handler {
 	wantToken := sha256.Sum256([]byte(cfg.APIToken))
 
@@ -135,42 +209,5 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "same-origin")
 		next.ServeHTTP(w, r)
-	})
-}
-
-// basicAuth pide usuario y contraseña con autenticación HTTP básica.
-// Compara los resúmenes SHA-256 en tiempo constante, para no revelar por el tiempo de respuesta
-// cuántos caracteres coinciden ni la longitud de los valores correctos.
-// Las rutas de cfg.PublicPaths pasan sin credenciales.
-func basicAuth(next http.Handler, cfg SecurityConfig) http.Handler {
-	wantUser := sha256.Sum256([]byte(cfg.AuthUser))
-	wantPassword := sha256.Sum256([]byte(cfg.AuthPassword))
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// La API usa su propio token (apiTokenAuth), así los scripts no necesitan usuario y contraseña.
-		if slices.Contains(cfg.PublicPaths, r.URL.Path) || strings.HasPrefix(r.URL.Path, apiPrefix) {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		gotUser, gotPassword, ok := r.BasicAuth()
-		if !ok {
-			// El navegador hace la primera petición sin credenciales y las pide al recibir el 401;
-			// se cuenta pero no se registra en el log, porque es parte normal del inicio de sesión.
-			cfg.Metrics.Inc(metricRejections, metrics.L("motivo", reasonNoCredentials))
-		} else {
-			userHash := sha256.Sum256([]byte(gotUser))
-			passwordHash := sha256.Sum256([]byte(gotPassword))
-			userOK := subtle.ConstantTimeCompare(userHash[:], wantUser[:]) == 1
-			passwordOK := subtle.ConstantTimeCompare(passwordHash[:], wantPassword[:]) == 1
-			if userOK && passwordOK {
-				next.ServeHTTP(w, r)
-				return
-			}
-			reject(cfg.Metrics, r, reasonBadCredentials, "usuario", gotUser)
-		}
-
-		w.Header().Set("WWW-Authenticate", `Basic realm="HTTPaaS", charset="UTF-8"`)
-		http.Error(w, "Se requiere usuario y contraseña.", http.StatusUnauthorized)
 	})
 }

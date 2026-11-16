@@ -18,6 +18,39 @@
     toastTimer = setTimeout(() => { toast.hidden = true; }, 2600);
   }
 
+  // Si la sesión venció, el servidor responde 401 (consultas JSON) o redirige al inicio de sesión
+  // (páginas). En los dos casos se lleva al usuario al formulario, para volver a esta página después.
+  function sessionExpired(response) {
+    const toLogin = response.redirected && new URL(response.url).pathname === "/login";
+    if (response.status !== 401 && !toLogin) return false;
+    const next = window.location.pathname + window.location.search;
+    window.location.assign("/login?next=" + encodeURIComponent(next));
+    return true;
+  }
+
+  // Inicio de sesión: mostrar u ocultar la contraseña y desactivar el botón al enviar.
+  const loginForm = document.querySelector("[data-login-form]");
+  if (loginForm) {
+    const password = loginForm.querySelector("[data-password]");
+    const toggle = loginForm.querySelector("[data-password-toggle]");
+
+    toggle.addEventListener("click", () => {
+      const show = password.type === "password";
+      password.type = show ? "text" : "password";
+      toggle.setAttribute("aria-pressed", String(show));
+      toggle.setAttribute("aria-label", show ? "Ocultar contraseña" : "Mostrar contraseña");
+      toggle.querySelector("[data-eye]").hidden = show;
+      toggle.querySelector("[data-eye-off]").hidden = !show;
+      password.focus();
+    });
+
+    loginForm.addEventListener("submit", () => {
+      const submit = loginForm.querySelector("[type=submit]");
+      submit.disabled = true;
+      submit.querySelector("[data-label]").textContent = "Ingresando…";
+    });
+  }
+
   // Menú lateral en pantallas pequeñas.
   const sidebar = document.querySelector("[data-sidebar]");
   const scrim = document.querySelector("[data-scrim]");
@@ -365,6 +398,7 @@
     async function pollProgress() {
       try {
         const response = await fetch(apiURL, { headers: { Accept: "application/json" }, cache: "no-store" });
+        if (sessionExpired(response)) return;
         if (response.ok) {
           const snap = await response.json();
           if (snap.status !== "running") {
@@ -439,6 +473,7 @@
       if (!userIsBusy()) {
         try {
           const response = await fetch(window.location.pathname, { cache: "no-store" });
+          if (sessionExpired(response)) return;
           if (response.ok) {
             const doc = new DOMParser().parseFromString(await response.text(), "text/html");
 

@@ -74,6 +74,17 @@
                     <span class="live-dot {{.Health.Tone}}"></span>
                     {{if not .Health.Checked}}Verificando infraestructura{{else if .Health.Operational}}Todos los sistemas operativos{{else}}Infraestructura con fallas{{end}}
                 </div>
+                {{if .User}}
+                    <div class="user-menu">
+                        <span class="user-avatar" aria-hidden="true">{{initial .User}}</span>
+                        <span class="user-name">{{.User}}</span>
+                        <form method="post" action="/logout">
+                            <button type="submit" class="logout-button" title="Cerrar sesión" aria-label="Cerrar sesión">
+                                {{icon "logout" 16}}
+                            </button>
+                        </form>
+                    </div>
+                {{end}}
             </div>
         </header>
 

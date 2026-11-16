@@ -1,0 +1,92 @@
+{{define "login"}}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Iniciar sesión · HTTPaaS</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-body">
+<main class="login-shell">
+    <section class="login-hero">
+        <div class="brand">
+            <div class="logo-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+            <div>
+                <strong>HTTPaaS</strong>
+                <span>Cloud Infrastructure</span>
+            </div>
+        </div>
+
+        <div class="login-hero-copy">
+            <h1>Publica sitios web en tu propia nube</h1>
+            <p>Crea servidores Apache, registra su nombre en el DNS y despliega tu contenido desde un solo panel.</p>
+            <ul>
+                <li><span>{{icon "rocket" 16}}</span> Instancias listas en un par de minutos</li>
+                <li><span>{{icon "globe" 16}}</span> Nombres automáticos en {{.Domain}}</li>
+                <li><span>{{icon "activity" 16}}</span> Monitoreo y control en vivo</li>
+            </ul>
+        </div>
+
+        <p class="login-hero-foot">Computación en la Nube · Universidad del Quindío</p>
+    </section>
+
+    <section class="login-panel">
+        <form class="login-card" method="post" action="/login" data-login-form>
+            <div class="login-card-brand">
+                <div class="logo-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+                <strong>HTTPaaS</strong>
+            </div>
+
+            <h2>Inicia sesión</h2>
+            <p class="login-subtitle">Ingresa tus credenciales para administrar la plataforma.</p>
+
+            {{if .Notice}}
+                <div class="login-notice" role="status">{{icon "check" 16}} <span>{{.Notice}}</span></div>
+            {{end}}
+            {{if .Error}}
+                <div class="form-error" role="alert">{{icon "alert" 16}} <span>{{.Error}}</span></div>
+            {{end}}
+
+            <input type="hidden" name="next" value="{{.Next}}">
+
+            <div class="login-field">
+                <label class="field-label" for="usuario">Usuario</label>
+                <div class="login-input{{if .Error}} input-error{{end}}">
+                    {{icon "user" 17}}
+                    <input id="usuario" name="usuario" type="text" value="{{.User}}" autocomplete="username"
+                           autocapitalize="none" spellcheck="false" required {{if not .User}}autofocus{{end}}>
+                </div>
+            </div>
+
+            <div class="login-field">
+                <label class="field-label" for="contrasena">Contraseña</label>
+                <div class="login-input{{if .Error}} input-error{{end}}">
+                    {{icon "lock" 17}}
+                    <input id="contrasena" name="contrasena" type="password" autocomplete="current-password"
+                           required data-password {{if .User}}autofocus{{end}}>
+                    <button type="button" class="password-toggle" data-password-toggle
+                            aria-label="Mostrar contraseña" aria-pressed="false">
+                        <span data-eye>{{icon "eye" 17}}</span>
+                        <span data-eye-off hidden>{{icon "eyeoff" 17}}</span>
+                    </button>
+                </div>
+            </div>
+
+            <button type="submit" class="primary-button login-submit">
+                <span data-label>Iniciar sesión</span> {{icon "arrow" 15}}
+            </button>
+
+            {{if .SessionTTL}}
+                <p class="login-foot">{{icon "shield" 14}} La sesión se cierra sola después de {{.SessionTTL}}.</p>
+            {{end}}
+        </form>
+    </section>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>
+{{end}}

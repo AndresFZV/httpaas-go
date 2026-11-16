@@ -139,7 +139,7 @@ export HTTPAAS_AUTH_PASSWORD="una-contraseña-larga"
 go run .
 ```
 
-Las dos variables de autenticación son opcionales: si no se definen, la interfaz no pide usuario ni contraseña y el log lo advierte al arrancar. Para activar la API REST, defina también `HTTPAAS_API_TOKEN` (ver *API REST*).
+Con `HTTPAAS_AUTH_USER` y `HTTPAAS_AUTH_PASSWORD` definidas, la interfaz muestra una página de inicio de sesión. Las dos son opcionales: si no se definen, la interfaz no pide inicio de sesión y el log lo advierte al arrancar. Para activar la API REST, defina también `HTTPAAS_API_TOKEN` (ver *API REST*).
 
 Abrir <http://localhost:8080>. El log de arranque muestra la configuración y advierte si falta VBoxManage, el disco o la llave.
 
@@ -174,8 +174,8 @@ Todos los valores tienen un predeterminado y se pueden cambiar con variables de 
 | `HTTPAAS_TEMPLATE_IP` | `192.168.10.20` | IP con la que arranca toda VM clonada |
 | `HTTPAAS_DNS_SERVER` | `192.168.10.10` | IP de `ns` |
 | `HTTPAAS_KNOWN_HOSTS` | `data/known_hosts` | Llaves de host SSH de `ns` y de las instancias |
-| `HTTPAAS_AUTH_USER` | *(vacío)* | Usuario de la autenticación básica; vacío la desactiva |
-| `HTTPAAS_AUTH_PASSWORD` | *(vacío)* | Contraseña de la autenticación básica; vacía la desactiva |
+| `HTTPAAS_AUTH_USER` | *(vacío)* | Usuario para iniciar sesión en la interfaz; vacío la deja sin inicio de sesión |
+| `HTTPAAS_AUTH_PASSWORD` | *(vacío)* | Contraseña para iniciar sesión; vacía deja la interfaz sin inicio de sesión |
 | `HTTPAAS_LOG_FORMAT` | `text` | Formato del log: `text` (clave=valor) o `json` |
 | `HTTPAAS_LOG_LEVEL` | `info` | Nivel mínimo del log: `debug`, `info`, `warn` o `error` |
 | `HTTPAAS_API_TOKEN` | *(vacío)* | Token de la API REST; vacío la deshabilita |
@@ -213,6 +213,9 @@ Solo usa la biblioteca estándar de Go: sin frameworks web ni dependencias exter
 
 | Método | Ruta | Descripción |
 |---|---|---|
+| `GET` | `/login` | Formulario de inicio de sesión |
+| `POST` | `/login` | Valida las credenciales y crea la sesión |
+| `POST` | `/logout` | Cierra la sesión |
 | `GET` | `/` | Dashboard |
 | `GET` | `/instances` | Lista de instancias |
 | `GET` | `/deploy` | Formulario de despliegue |
@@ -284,7 +287,8 @@ La especificación completa está en [`api/openapi.yaml`](api/openapi.yaml). Se 
 
 - **Protección CSRF**: los `POST` que llegan desde otro sitio se rechazan con 403 (`http.CrossOriginProtection`, que revisa las cabeceras `Sec-Fetch-Site` y `Origin`). Los clientes que no son navegadores, como `curl`, no envían esas cabeceras y no se ven afectados. Cada rechazo queda en el log con `componente=seguridad` y se cuenta en la métrica `httpaas_security_rejections_total`.
 - **Cabeceras de seguridad** en todas las respuestas: `Content-Security-Policy` (solo recursos del propio servidor y de Google Fonts), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` y `Referrer-Policy: same-origin`.
-- **Autenticación básica opcional** con `HTTPAAS_AUTH_USER` y `HTTPAAS_AUTH_PASSWORD`. La comparación se hace en tiempo constante. `/healthz` y `/readyz` no la piden, porque los consultan orquestadores y balanceadores de carga; `/metrics` sí.
+- **Inicio de sesión** con `HTTPAAS_AUTH_USER` y `HTTPAAS_AUTH_PASSWORD`, en una página propia (`/login`). Las credenciales se comparan en tiempo constante. Al iniciar sesión se crea una sesión con un identificador aleatorio de 32 bytes, que vence a las 8 horas, guardado en la cookie `httpaas_sesion` con `HttpOnly` (JavaScript no puede leerla) y `SameSite=Lax`. Sin sesión, las páginas redirigen al inicio de sesión y vuelven a la página pedida después de entrar; solo se aceptan rutas internas en `next`, para que un enlace no pueda llevar a otro sitio. Después de 5 intentos fallidos desde la misma IP, el inicio de sesión se bloquea 1 minuto. Los inicios, cierres e intentos fallidos quedan en el log con `componente=seguridad`.
+- **Rutas sin inicio de sesión**: `/healthz` y `/readyz` son públicas, porque los consultan orquestadores y balanceadores de carga. `/metrics` acepta la sesión del navegador o el mismo usuario y contraseña con autenticación básica, porque Prometheus no puede llenar un formulario.
 - **Token de la API**: las rutas `/api/v1/` piden `Authorization: Bearer <token>` (`HTTPAAS_API_TOKEN`) en lugar de usuario y contraseña. Sin token configurado, la API responde 503. La especificación `/api/v1/openapi.yaml` es pública.
 - **Verificación de llaves de host SSH**: la app usa su propio `known_hosts`. La llave de `ns` se registra a mano y se exige (`StrictHostKeyChecking=yes`). La de cada instancia se registra en la primera conexión y se verifica en las siguientes (`accept-new`). Cuando una IP pasa a otra VM (la IP temporal en cada creación, o la IP de una instancia eliminada), la app borra la llave anterior.
 - **Límites del `.zip`**: 50 MB comprimido, 200 MB descomprimido y 5000 archivos. El tamaño descomprimido se mide descomprimiendo el archivo, porque el que declara el `.zip` se puede falsificar.
@@ -379,7 +383,8 @@ Compress-Archive -Path ejemplos\negocios\* -DestinationPath negocios.zip -Force
 - **Caché ARP de Windows**: todas las VMs arrancan con la misma IP temporal (y las IPs se reutilizan al eliminar), cada una con una MAC distinta. Windows conserva la MAC anterior y la VM nueva queda inalcanzable; la app borra esa entrada con `arp -d`, que requiere ejecutarla como administrador.
 - **Una instancia a la vez**: por la IP temporal compartida, los aprovisionamientos se encolan.
 - **Llaves de host compartidas**: todas las instancias salen del mismo disco y comparten la llave de host SSH. La app verifica cada llave, pero no puede distinguir una instancia de otra hasta que la plantilla genere llaves nuevas en el primer arranque.
-- **Sin HTTPS**: la interfaz se sirve por HTTP en `localhost`; con autenticación activa, las credenciales viajan sin cifrar dentro del propio equipo.
+- **Sin HTTPS**: la interfaz se sirve por HTTP en `localhost`; las credenciales y la cookie de sesión viajan sin cifrar dentro del propio equipo, por eso la cookie no lleva el atributo `Secure`.
+- **Sesiones en memoria**: al reiniciar la aplicación se pierden y hay que volver a iniciar sesión.
 - **Estado de los despliegues en memoria**: si la app se reinicia durante un despliegue, se pierde su seguimiento (las instancias ya creadas siguen en el registro).
 - **Tiempos**: crear una instancia tarda unos 2-3 minutos, dominados por los dos arranques de Debian (antes y después de configurar la IP).
 - **Reinicio del anfitrión**: las VMs quedan apagadas; se encienden desde la interfaz (`ns` con *Encender ns* en el dashboard).

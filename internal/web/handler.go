@@ -70,6 +70,7 @@ type Config struct {
 	StaticDir    string
 	ReadyMaxAge  time.Duration // antigüedad máxima de la verificación para /readyz; 0 usa 30 s
 	OpenAPIFile  string        // especificación que se publica en /api/v1/openapi.yaml; vacío la desactiva
+	Access       AccessConfig  // acceso SSH y recursos de las instancias, para el detalle de cada una
 }
 
 // Deps son los servicios que usa la interfaz.
@@ -95,6 +96,7 @@ type Handler struct {
 	auth        *auth.Authenticator
 	pages       map[string]*template.Template
 	loginTmpl   *template.Template
+	access      accessView
 }
 
 // NewHandler carga las páginas de la interfaz y prepara los handlers.
@@ -119,6 +121,7 @@ func NewHandler(cfg Config, deps Deps) (*Handler, error) {
 		auth:        deps.Auth,
 		pages:       pages,
 		loginTmpl:   loginTmpl,
+		access:      newAccessView(cfg.Access),
 	}
 	h.registerGauges(deps.Metrics)
 	return h, nil
@@ -171,6 +174,7 @@ type pageData struct {
 
 	Domain    string
 	DNSServer string
+	Access    accessView // acceso SSH y recursos, para el detalle de las instancias
 	Instances []instanceView
 	Recent    []instanceView
 	Stats     stats
@@ -230,6 +234,7 @@ func (h *Handler) newPage(r *http.Request, page, breadcrumb string) pageData {
 		User:       h.currentUser(r),
 		Domain:     h.cfg.Domain,
 		DNSServer:  h.cfg.DNSServer,
+		Access:     h.access,
 		Instances:  views,
 		Health:     newHealthView(snap),
 		NS:         ns,

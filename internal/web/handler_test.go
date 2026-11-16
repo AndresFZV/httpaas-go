@@ -134,6 +134,15 @@ func newTestHandler(t *testing.T, snap health.Snapshot, pw *fakePower, reg *metr
 		LastIP:       last,
 		TemplatesDir: filepath.Join("..", "..", "templates"),
 		StaticDir:    filepath.Join("..", "..", "static"),
+		Access: AccessConfig{
+			SSHUser:        "deploy",
+			SSHKey:         "/home/andres/.ssh/httpaas",
+			KnownHostsFile: "/home/andres/httpaas-go/data/known_hosts",
+			TemplateDisk:   `C:\HTTPaaS\ApacheServer.vdi`,
+			MemoryMB:       512,
+			CPUs:           1,
+			Home:           "/home/andres",
+		},
 	}, Deps{
 		Store:       store,
 		Deployments: newFakeDeployments(),
@@ -436,4 +445,18 @@ func TestTemplateHelpers(t *testing.T) {
 	if got := ago(time.Now().Add(-5 * time.Minute)); got != "hace 5 minutos" {
 		t.Errorf("ago() = %q", got)
 	}
+}
+
+func TestInstanceDetail(t *testing.T) {
+	mux := newTestServer(t, healthySnapshot())
+
+	assertPage(t, mux, "/instances", http.StatusOK,
+		`<th class="col-actions">Acciones</th>`,
+		`data-detail-dialog`,
+		`data-detail title="Ver detalle"`,
+		`data-ssh-prefix="ssh -i ~/.ssh/httpaas -o UserKnownHostsFile=~/httpaas-go/data/known_hosts deploy@"`,
+		`data-cidr="192.168.10.30/24"`,
+		`Diferencial de ApacheServer.vdi`,
+		`1 CPU · 512 MB de RAM`,
+	)
 }
